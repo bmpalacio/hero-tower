@@ -27,9 +27,26 @@
     #gameWin h2 { color: #66bb6a; }
     #gameWin button { background: #66bb6a; color: #fff; }
     .controls { margin-top: 6px; font-size: 11px; color: #6b9b6b; }
+    #introOverlay { background: rgba(13,31,13,0.97); }
+    #introOverlay .intro-box { max-width: 320px; text-align: center; padding: 0 24px; }
+    #introOverlay h2 { font-size: 1.35rem; margin: 0 0 16px; color: #c8e6c9; }
+    #introOverlay .intro-row { display: flex; align-items: center; gap: 12px; margin: 12px 0; font-size: 13px; color: #a5d6a7; text-align: left; }
+    #introOverlay .intro-icon { font-size: 1.5rem; flex-shrink: 0; }
+    #introOverlay .intro-cta { margin-top: 24px; }
+    #introOverlay .intro-cta button { background: #4caf50; color: #0d1f0d; padding: 14px 32px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; border: none; font-family: inherit; }
+    #introOverlay .intro-cta button:hover { background: #66bb6a; }
   </style>
 </head>
 <body>
+  <div class="overlay show" id="introOverlay">
+    <div class="intro-box">
+      <h2>Defend the base</h2>
+      <p class="intro-row"><span class="intro-icon">🖥️</span> <span><strong>Desktop:</strong> Arrow keys to move</span></p>
+      <p class="intro-row"><span class="intro-icon">📱</span> <span><strong>Mobile:</strong> Tap where the horse should go</span></p>
+      <p class="intro-row"><span class="intro-icon">🪙</span> <span>Kill enemies → earn coins. Walk over build zones to spend coins on <strong>defense towers</strong>.</span></p>
+      <div class="intro-cta"><button type="button" id="introPlayBtn">Play</button></div>
+    </div>
+  </div>
   <h1>Hero Tower Defense</h1>
   <div class="hud">
     <span class="coins">Coins: <strong id="coinDisplay">0</strong></span>
@@ -237,7 +254,9 @@
         dctx.fillRect(2, 2, tileSize - 4, tileSize - 4);
         this.textures.addCanvas('dirt', dirtCanvas);
 
-        this.mapIndex = 0;
+        this.mapSequence = [];
+        for (let i = 0; i < MAX_LEVEL; i++) this.mapSequence.push(Math.floor(Math.random() * MAP_CONFIGS.length));
+        this.mapIndex = this.mapSequence[0];
         this.buildTerrainAndSlots();
         this.terrainLayer.setDepth(0);
 
@@ -264,6 +283,17 @@
         this.towers = this.add.group();
 
         this.cursors = this.input.keyboard.createCursorKeys();
+        this.moveTarget = null;
+        this.input.on('pointerdown', (pointer) => {
+          if (this.gameOver || this.paused || this.introWaiting) return;
+          const cam = this.cameras.main;
+          const world = cam.getWorldPoint(pointer.x, pointer.y);
+          const w = cam.width, h = cam.height;
+          this.moveTarget = {
+            x: Math.max(MARGIN_X, Math.min(w - MARGIN_X, world.x)),
+            y: Math.max(MARGIN_Y, Math.min(h - MARGIN_Y, world.y))
+          };
+        });
         this.input.keyboard.on('keydown-P', () => {
           if (this.gameOver) return;
           this.paused = !this.paused;
@@ -285,6 +315,8 @@
               document.getElementById('gameWin').classList.add('show');
               document.querySelector('#gameWin h2').textContent = 'Level 5 complete!';
               document.querySelector('#gameWin p').textContent = 'You won!';
+              const winBtn = document.querySelector('#gameWin button');
+              if (winBtn) winBtn.textContent = 'Play Again';
               return;
             }
             this.towerData = [];
@@ -305,8 +337,8 @@
               });
               this.towerSlots = [];
             }
-            this.mapIndex = (this.mapIndex + 1) % MAP_CONFIGS.length;
             this.wave++;
+            this.mapIndex = this.mapSequence[this.wave - 1];
             this.buildTerrainAndSlots();
             this.startWave();
           }
@@ -329,7 +361,19 @@
         this.enemyArrowData = [];
         this.enemyArrows = this.add.group();
         this.coinData = [];
-        this.startWave();
+        const introOverlay = document.getElementById('introOverlay');
+        const introVisible = introOverlay && introOverlay.classList.contains('show');
+        this.introWaiting = !!introVisible;
+        const introBtn = document.getElementById('introPlayBtn');
+        if (introBtn && introOverlay) {
+          introBtn.onclick = () => {
+            introOverlay.classList.remove('show');
+            introOverlay.style.display = 'none';
+            this.introWaiting = false;
+            this.startWave();
+          };
+        }
+        if (!this.introWaiting) this.startWave();
       },
 
       buildTerrainAndSlots: function() {
@@ -465,21 +509,36 @@
         const w = this.cameras.main.width;
         const h = this.cameras.main.height;
 
-        if (this.cursors.left.isDown) {
-          this.hero.x = Math.max(MARGIN_X, this.hero.x - HERO_SPEED * dt);
-          this.hero.facingAngle = Math.PI;
-        }
-        if (this.cursors.right.isDown) {
-          this.hero.x = Math.min(w - MARGIN_X, this.hero.x + HERO_SPEED * dt);
-          this.hero.facingAngle = 0;
-        }
-        if (this.cursors.up.isDown) {
-          this.hero.y = Math.max(MARGIN_Y, this.hero.y - HERO_SPEED * dt);
-          this.hero.facingAngle = -Math.PI / 2;
-        }
-        if (this.cursors.down.isDown) {
-          this.hero.y = Math.min(h - MARGIN_Y, this.hero.y + HERO_SPEED * dt);
-          this.hero.facingAngle = Math.PI / 2;
+        const arrowDown = this.cursors.left.isDown || this.cursors.right.isDown || this.cursors.up.isDown || this.cursors.down.isDown;
+        if (arrowDown) {
+          this.moveTarget = null;
+          if (this.cursors.left.isDown) {
+            this.hero.x = Math.max(MARGIN_X, this.hero.x - HERO_SPEED * dt);
+            this.hero.facingAngle = Math.PI;
+          }
+          if (this.cursors.right.isDown) {
+            this.hero.x = Math.min(w - MARGIN_X, this.hero.x + HERO_SPEED * dt);
+            this.hero.facingAngle = 0;
+          }
+          if (this.cursors.up.isDown) {
+            this.hero.y = Math.max(MARGIN_Y, this.hero.y - HERO_SPEED * dt);
+            this.hero.facingAngle = -Math.PI / 2;
+          }
+          if (this.cursors.down.isDown) {
+            this.hero.y = Math.min(h - MARGIN_Y, this.hero.y + HERO_SPEED * dt);
+            this.hero.facingAngle = Math.PI / 2;
+          }
+        } else if (this.moveTarget) {
+          const dx = this.moveTarget.x - this.hero.x;
+          const dy = this.moveTarget.y - this.hero.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const move = Math.min(HERO_SPEED * dt, len);
+          this.hero.x += (dx / len) * move;
+          this.hero.y += (dy / len) * move;
+          this.hero.x = Math.max(MARGIN_X, Math.min(w - MARGIN_X, this.hero.x));
+          this.hero.y = Math.max(MARGIN_Y, Math.min(h - MARGIN_Y, this.hero.y));
+          this.hero.facingAngle = Math.atan2(dy, dx);
+          if (Math.hypot(this.hero.x - this.moveTarget.x, this.hero.y - this.moveTarget.y) < 10) this.moveTarget = null;
         }
         this.hero.rotation = this.hero.facingAngle;
 
@@ -490,7 +549,7 @@
             this.spawnEnemy();
             this.waveEnemiesToSpawn--;
           }
-        } else if (!this.levelPassedWaitingEnter && this.enemyData.length === 0) this.startWave();
+        } else if (!this.introWaiting && !this.levelPassedWaitingEnter && this.enemyData.length === 0) this.startWave();
 
         this.towerSlots.forEach(slot => {
           if (this.hasTowerAt(slot.cx, slot.cy)) {
@@ -702,9 +761,17 @@
     document.getElementById('restartBtn').onclick = () => {
       game.scene.getScene('Game').scene.restart();
       document.getElementById('gameOver').classList.remove('show');
+      document.getElementById('gameWin').classList.remove('show');
       document.getElementById('levelPassedOverlay').classList.remove('show');
+      document.getElementById('pauseOverlay').classList.remove('show');
     };
-    document.getElementById('continueBtn').onclick = () => document.getElementById('gameWin').classList.remove('show');
+    document.getElementById('continueBtn').onclick = () => {
+      game.scene.getScene('Game').scene.restart();
+      document.getElementById('gameWin').classList.remove('show');
+      document.getElementById('gameOver').classList.remove('show');
+      document.getElementById('levelPassedOverlay').classList.remove('show');
+      document.getElementById('pauseOverlay').classList.remove('show');
+    };
   </script>
 </body>
 </html>
