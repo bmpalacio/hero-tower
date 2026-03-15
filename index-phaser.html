@@ -85,10 +85,12 @@
     const TOWER_COST = 50;
     const TOWER_RANGE = 160;
     const TOWER_COOLDOWN_MS = 600;
-    const WAVE_SPAWN_INTERVAL_MS = 400;
-    const WAVE_ENEMY_COUNT_BASE = 6;
-    const WAVE_ENEMY_COUNT_INCREMENT = 2;
+    const WAVE_SPAWN_INTERVAL_MS = 350;
+    const WAVE_ENEMY_COUNT_BASE = 22;
+    const WAVE_ENEMY_COUNT_INCREMENT = 10;
     const TOWER_SLOT_SIZE = 44;
+    const TOWER_SLOT_OFFSET_FROM_PATH = 62;
+    const MIN_SLOT_DISTANCE = 50;
     const MAX_LEVEL = 5;
     const ENEMY_TYPES = [
       { id: 'grunt', hp: 1, speed: 90, coins: 5 },
@@ -96,9 +98,33 @@
       { id: 'fast', hp: 2, speed: 120, coins: 8 }
     ];
     const MAP_CONFIGS = [
-      { pathCells: [[31,9],[30,9],[28,9],[26,11],[25,11],[23,11],[21,11],[19,11],[17,11],[14,11],[11,11],[8,11],[6,11],[3,11]], slots: [{x:Math.round(260*SX),y:Math.round(120*SY)},{x:Math.round(260*SX),y:Math.round(356*SY)},{x:Math.round(458*SX),y:Math.round(178*SY)},{x:Math.round(458*SX),y:Math.round(298*SY)},{x:Math.round(618*SX),y:Math.round(238*SY)}] },
-      { pathCells: [[31,5],[30,7],[28,8],[26,10],[25,11],[23,12],[21,13],[19,13],[17,12],[14,11],[11,11],[8,12],[6,13],[3,11]], slots: [{x:Math.round(220*SX),y:Math.round(140*SY)},{x:Math.round(400*SX),y:Math.round(120*SY)},{x:Math.round(400*SX),y:Math.round(340*SY)},{x:Math.round(580*SX),y:Math.round(240*SY)},{x:Math.round(660*SX),y:Math.round(160*SY)}] },
-      { pathCells: [[31,14],[30,14],[28,12],[26,11],[25,11],[23,11],[21,12],[19,13],[17,13],[14,12],[11,11],[8,11],[6,11],[3,11]], slots: [{x:Math.round(300*SX),y:Math.round(100*SY)},{x:Math.round(300*SX),y:Math.round(380*SY)},{x:Math.round(500*SX),y:Math.round(260*SY)},{x:Math.round(620*SX),y:Math.round(140*SY)},{x:Math.round(620*SX),y:Math.round(380*SY)}] }
+      {
+        paths: [
+          [[31,9],[30,9],[28,9],[26,11],[25,11],[23,11],[21,11],[19,11],[17,11],[14,11],[11,11],[8,11],[6,11],[3,11]],
+          [[31,4],[30,4],[28,5],[26,6],[24,7],[21,8],[18,9],[14,10],[11,11],[8,11],[6,11],[3,11]],
+          [[31,15],[30,15],[28,14],[26,13],[24,12],[21,11],[18,11],[14,11],[11,11],[8,11],[6,11],[3,11]],
+          [[31,6],[29,6],[27,7],[24,8],[20,9],[16,10],[12,11],[8,11],[5,11],[3,11]],
+          [[31,13],[29,13],[27,12],[24,11],[20,11],[16,11],[12,11],[8,11],[5,11],[3,11]]
+        ]
+      },
+      {
+        paths: [
+          [[31,5],[30,7],[28,8],[26,10],[25,11],[23,12],[21,13],[19,13],[17,12],[14,11],[11,11],[8,12],[6,13],[3,11]],
+          [[31,8],[29,8],[26,9],[23,10],[19,11],[15,12],[11,12],[8,12],[6,13],[3,11]],
+          [[31,11],[29,11],[26,10],[23,9],[19,10],[15,11],[11,11],[8,11],[6,11],[3,11]],
+          [[31,3],[28,5],[25,7],[21,9],[17,11],[13,12],[9,12],[6,12],[3,11]],
+          [[31,16],[28,14],[25,12],[21,11],[17,11],[13,11],[9,11],[6,11],[3,11]]
+        ]
+      },
+      {
+        paths: [
+          [[31,14],[30,14],[28,12],[26,11],[25,11],[23,11],[21,12],[19,13],[17,13],[14,12],[11,11],[8,11],[6,11],[3,11]],
+          [[31,10],[29,10],[26,11],[23,11],[20,12],[17,12],[14,11],[11,11],[8,11],[3,11]],
+          [[31,7],[28,8],[25,9],[22,10],[18,11],[14,11],[10,11],[6,11],[3,11]],
+          [[31,17],[28,15],[24,13],[20,12],[16,11],[12,11],[8,11],[3,11]],
+          [[31,2],[27,4],[23,6],[19,8],[15,10],[11,11],[7,11],[3,11]]
+        ]
+      }
     ];
 
     function dist(ax, ay, bx, by) { return Math.hypot(bx - ax, by - ay); }
@@ -261,9 +287,27 @@
               document.querySelector('#gameWin p').textContent = 'You won!';
               return;
             }
+            this.towerData = [];
+            if (this.towers && this.towers.getChildren) {
+              this.towers.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
+              this.towers.clear(true, true);
+            }
+            this.towerProjData = [];
+            if (this.towerProjectiles && this.towerProjectiles.getChildren) {
+              this.towerProjectiles.getChildren().slice().forEach(p => { try { if (p && p.destroy) p.destroy(); } catch (e) {} });
+              this.towerProjectiles.clear(true, true);
+            }
+            if (this.towerSlots && this.towerSlots.length) {
+              this.towerSlots.forEach(s => {
+                if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
+                if (s.zone && s.zone.destroy) s.zone.destroy();
+                if (s.costText && s.costText.destroy) s.costText.destroy();
+              });
+              this.towerSlots = [];
+            }
             this.mapIndex = (this.mapIndex + 1) % MAP_CONFIGS.length;
-            this.buildTerrainAndSlots();
             this.wave++;
+            this.buildTerrainAndSlots();
             this.startWave();
           }
         });
@@ -297,16 +341,24 @@
         if (this.terrainLayer) {
           this.terrainLayer.destroy(true);
         }
+        const config = MAP_CONFIGS[this.mapIndex];
+        const pathCount = (this.wave != null && this.wave >= 1) ? this.wave : 1;
+        const pathArrays = config.paths ? config.paths.slice(0, Math.min(pathCount, config.paths.length)) : [config.pathCells || []];
+        this.numPaths = pathArrays.length;
         const mapData = [];
         for (let row = 0; row < mapH; row++) {
           mapData[row] = [];
           for (let col = 0; col < mapW; col++) mapData[row][col] = 0;
         }
-        const pathCells = MAP_CONFIGS[this.mapIndex].pathCells;
-        pathCells.forEach(([c, r]) => {
-          if (r >= 0 && r < mapH && c >= 0 && c < mapW) mapData[r][c] = 1;
-          if (r + 1 < mapH) mapData[r + 1][c] = 1;
+        pathArrays.forEach(pathCells => {
+          pathCells.forEach(([c, r]) => {
+            if (r >= 0 && r < mapH && c >= 0 && c < mapW) mapData[r][c] = 1;
+            if (r + 1 < mapH) mapData[r + 1][c] = 1;
+          });
         });
+        this.paths = pathArrays.map(pathCells => ({
+          waypoints: pathCells.map(([c, r]) => ({ x: c * tileSize + tileSize / 2, y: r * tileSize + tileSize / 2 }))
+        }));
         this.terrainLayer = this.add.container(0, 0).setDepth(0);
         for (let row = 0; row < mapH; row++) {
           for (let col = 0; col < mapW; col++) {
@@ -316,16 +368,43 @@
           }
         }
         if (this.towerSlots && this.towerSlots.length) {
-          this.towerSlots.forEach(s => { s.zone.destroy(); s.costText.destroy(); });
+          this.towerSlots.forEach(s => {
+            if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
+            s.zone.destroy();
+            s.costText.destroy();
+          });
         }
         this.towerSlots = [];
-        const slots = MAP_CONFIGS[this.mapIndex].slots;
-        slots.forEach(s => {
-          const cx = s.x + TOWER_SLOT_SIZE/2;
-          const cy = s.y + TOWER_SLOT_SIZE/2;
-          const zone = this.add.rectangle(cx, cy, TOWER_SLOT_SIZE, TOWER_SLOT_SIZE, 0, 0).setStrokeStyle(2, 0xffffff, 0.5).setOrigin(0.5).setDepth(50);
-          const costText = this.add.text(cx, cy - 4, '0/' + TOWER_COST, { font: 'bold 11px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(50);
-          this.towerSlots.push({ zone, costText, cx, cy, progress: 0 });
+        const off = TOWER_SLOT_OFFSET_FROM_PATH;
+        const placed = [];
+        this.paths.forEach((path, pathId) => {
+          const wp = path.waypoints;
+          if (wp.length < 2) return;
+          const idx1 = Math.floor(wp.length * 0.25);
+          const idx2 = Math.floor(wp.length * 0.65);
+          const indices = [idx1, idx2];
+          const signs = [1, -1];
+          indices.forEach((i, si) => {
+            const pt = wp[Math.min(i, wp.length - 1)];
+            const next = wp[Math.min(i + 1, wp.length - 1)];
+            let dx = next.x - pt.x, dy = next.y - pt.y;
+            if (dx === 0 && dy === 0 && i > 0) { dx = pt.x - wp[i - 1].x; dy = pt.y - wp[i - 1].y; }
+            const len = Math.hypot(dx, dy) || 1;
+            const perpX = -dy / len;
+            const perpY = dx / len;
+            const sign = signs[si] || 1;
+            const cx = pt.x + perpX * off * sign;
+            const cy = pt.y + perpY * off * sign;
+            const tooClose = placed.some(p => dist(p.cx, p.cy, cx, cy) < MIN_SLOT_DISTANCE);
+            if (tooClose) return;
+            placed.push({ cx, cy });
+            const barW = TOWER_SLOT_SIZE - 6;
+            const barH = 10;
+            const progressBar = this.add.rectangle(cx - barW/2, cy + 6, barW, barH, 0x4caf50, 0.5).setOrigin(0, 0.5).setDepth(49);
+            const zone = this.add.rectangle(cx, cy, TOWER_SLOT_SIZE, TOWER_SLOT_SIZE, 0, 0).setStrokeStyle(2, 0xffffff, 0.5).setOrigin(0.5).setDepth(50);
+            const costText = this.add.text(cx, cy - 4, '0/' + TOWER_COST, { font: 'bold 11px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(50);
+            this.towerSlots.push({ zone, costText, progressBar, cx, cy, progress: 0, pathId });
+          });
         });
       },
 
@@ -366,12 +445,17 @@
 
       spawnEnemy: function() {
         const type = this.pickEnemyTypeForLevel(this.wave);
-        const y = Math.round(80 * SY) + Math.random() * (this.cameras.main.height - Math.round(160 * SY));
-        const enemy = this.add.image(this.cameras.main.width + 20, y, this.enemyKey).setDisplaySize(32, 36).setOrigin(0.5, 0.5).setFlipX(true).setDepth(100);
+        if (!this.paths || this.paths.length === 0) return;
+        const pathId = Math.floor(Math.random() * this.paths.length);
+        const path = this.paths[pathId];
+        const wp = path.waypoints;
+        if (!wp || wp.length === 0) return;
+        const start = wp[0];
+        const enemy = this.add.image(start.x, start.y, this.enemyKey).setDisplaySize(32, 36).setOrigin(0.5, 0.5).setFlipX(true).setDepth(100);
         if (type.id === 'armored') enemy.setTint(0x5555ff);
         if (type.id === 'fast') enemy.setTint(0xffaa00);
         this.enemies.add(enemy);
-        this.enemyData.push({ obj: enemy, hp: type.hp, maxHp: type.hp, speed: type.speed, coins: type.coins });
+        this.enemyData.push({ obj: enemy, hp: type.hp, maxHp: type.hp, speed: type.speed, coins: type.coins, pathIndex: 0, pathId: pathId });
       },
 
       update: function(time, delta) {
@@ -412,6 +496,7 @@
           if (this.hasTowerAt(slot.cx, slot.cy)) {
             slot.zone.setVisible(false);
             slot.costText.setVisible(false);
+            if (slot.progressBar) slot.progressBar.setVisible(false);
             return;
           }
           const inZone = Math.abs(this.hero.x - slot.cx) <= TOWER_SLOT_SIZE/2 && Math.abs(this.hero.y - slot.cy) <= TOWER_SLOT_SIZE/2;
@@ -425,6 +510,10 @@
             }
           }
           slot.costText.setText(slot.progress + '/' + TOWER_COST);
+          if (slot.progressBar) {
+            slot.progressBar.scaleX = slot.progress / TOWER_COST;
+            slot.progressBar.setVisible(slot.progress > 0);
+          }
         });
 
         this.enemyData.forEach(ed => {
@@ -444,10 +533,22 @@
               });
             }
           } else {
-            const dx = BASE_X - ed.obj.x, dy = BASE_Y - ed.obj.y;
-            const len = Math.hypot(dx, dy) || 1;
-            ed.obj.x += (dx / len) * ed.speed * dt;
-            ed.obj.y += (dy / len) * ed.speed * dt;
+            const path = this.paths && ed.pathId != null && this.paths[ed.pathId] ? this.paths[ed.pathId] : (this.paths && this.paths[0]) ? this.paths[0] : null;
+            const wp = path ? path.waypoints : null;
+            if (wp && ed.pathIndex != null && ed.pathIndex < wp.length) {
+              const target = wp[ed.pathIndex];
+              const dx = target.x - ed.obj.x, dy = target.y - ed.obj.y;
+              const len = Math.hypot(dx, dy) || 1;
+              const move = Math.min(ed.speed * dt, len);
+              ed.obj.x += (dx / len) * move;
+              ed.obj.y += (dy / len) * move;
+              if (dist(ed.obj.x, ed.obj.y, target.x, target.y) < 12) ed.pathIndex++;
+            } else {
+              const dx = BASE_X - ed.obj.x, dy = BASE_Y - ed.obj.y;
+              const len = Math.hypot(dx, dy) || 1;
+              ed.obj.x += (dx / len) * ed.speed * dt;
+              ed.obj.y += (dy / len) * ed.speed * dt;
+            }
           }
         });
         this.enemyData.filter(ed => ed.hp <= 0).forEach(ed => ed.obj.destroy());
