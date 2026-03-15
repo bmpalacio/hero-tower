@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hero Tower Defense</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0d1f0d; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'Outfit', sans-serif; }
+    h1 { margin: 0 0 8px; font-size: 1.5rem; font-weight: 700; color: #c8e6c9; letter-spacing: 0.02em; }
+    .hud { display: flex; gap: 24px; margin-bottom: 10px; font-size: 14px; color: #a5d6a7; }
+    .hud .coins { color: #ffd54f; }
+    .hud .base-hp { color: #81c784; }
+    .hud .wave { color: #ef9a9a; }
+    #game-container { border-radius: 12px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 2px rgba(255,255,255,0.06); }
+    .instructions { margin-top: 10px; font-size: 11px; color: #6b9b6b; text-align: center; max-width: 520px; }
+    #towerPrompt { position: fixed; background: rgba(30,60,30,0.95); border: 1px solid #4caf50; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #fff; display: none; pointer-events: none; z-index: 10; }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 1000; }
+    .overlay.show { display: flex !important; }
+    .overlay h2 { margin: 0; font-size: 1.75rem; }
+    .overlay p { margin: 8px 0 0; opacity: 0.9; }
+    .overlay button { margin-top: 20px; padding: 14px 28px; font-family: inherit; font-size: 14px; font-weight: 600; border: none; border-radius: 10px; cursor: pointer; }
+    #gameOver h2 { color: #ef5350; }
+    #gameOver button { background: #ef5350; color: #fff; }
+    #gameWin h2 { color: #66bb6a; }
+    #gameWin button { background: #66bb6a; color: #fff; }
+    .controls { margin-top: 6px; font-size: 11px; color: #6b9b6b; }
+  </style>
+</head>
+<body>
+  <h1>Hero Tower Defense</h1>
+  <div class="hud">
+    <span class="coins">Coins: <strong id="coinDisplay">0</strong></span>
+    <span class="base-hp">Base HP: <strong id="baseHpDisplay">100</strong></span>
+    <span class="wave">Level: <strong id="waveDisplay">1</strong></span>
+  </div>
+  <div id="game-container"></div>
+  <div class="instructions">Arrow keys – move · Auto-shoot in range · Walk over a build zone to deposit coins (50 to build tower) · Map changes each level</div>
+  <div class="controls">P – Pause &nbsp; R – Reset</div>
+  <div id="towerPrompt"></div>
+  <div class="overlay" id="pauseOverlay" style="display: none;">
+    <h2>Paused</h2>
+    <p>Press P to resume</p>
+  </div>
+  <div class="overlay" id="levelPassedOverlay" style="display: none;">
+    <h2 style="color: #81c784;">Level passed!</h2>
+    <p style="color: #fff;">Press Enter to continue</p>
+  </div>
+  <div class="overlay" id="gameOver">
+    <h2>Base Destroyed</h2>
+    <p>Enemies overwhelmed your base.</p>
+    <button id="restartBtn">Play Again</button>
+  </div>
+  <div class="overlay" id="gameWin" style="display: none;">
+    <h2>Victory</h2>
+    <p>You survived the waves!</p>
+    <button id="continueBtn">Continue</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.80.1/dist/phaser.min.js"></script>
+  <script>
+    const TILE = 32;
+    const GAME_WIDTH = 1100;
+    const GAME_HEIGHT = 700;
+    const SX = GAME_WIDTH / 800;
+    const SY = GAME_HEIGHT / 520;
+    const BASE_X = Math.round(80 * SX);
+    const BASE_Y = Math.round(260 * SY);
+    const MARGIN_X = Math.round(50 * SX);
+    const MARGIN_Y = Math.round(50 * SY);
+    const BASE_HP_MAX = 100;
+    const BASE_DAMAGE_PER_ARROW = 10;
+    const ENEMY_BASE_SHOOT_RANGE = 100;
+    const ENEMY_SHOOT_COOLDOWN_MS = 800;
+    const HERO_SPEED = 280;
+    const HERO_SHOOT_RANGE = 180;
+    const HERO_SHOOT_COOLDOWN_MS = 400;
+    const ARROW_SPEED = 520;
+    const ENEMY_R = 14;
+    const ENEMY_SPEED = 90;
+    const COIN_PICKUP_RANGE = 36;
+    const COINS_PER_KILL = 5;
+    const TOWER_COST = 50;
+    const TOWER_RANGE = 160;
+    const TOWER_COOLDOWN_MS = 600;
+    const WAVE_SPAWN_INTERVAL_MS = 400;
+    const WAVE_ENEMY_COUNT_BASE = 6;
+    const WAVE_ENEMY_COUNT_INCREMENT = 2;
+    const TOWER_SLOT_SIZE = 44;
+    const MAX_LEVEL = 5;
+    const ENEMY_TYPES = [
+      { id: 'grunt', hp: 1, speed: 90, coins: 5 },
+      { id: 'armored', hp: 3, speed: 65, coins: 12 },
+      { id: 'fast', hp: 2, speed: 120, coins: 8 }
+    ];
+    const MAP_CONFIGS = [
+      { pathCells: [[31,9],[30,9],[28,9],[26,11],[25,11],[23,11],[21,11],[19,11],[17,11],[14,11],[11,11],[8,11],[6,11],[3,11]], slots: [{x:Math.round(260*SX),y:Math.round(120*SY)},{x:Math.round(260*SX),y:Math.round(356*SY)},{x:Math.round(458*SX),y:Math.round(178*SY)},{x:Math.round(458*SX),y:Math.round(298*SY)},{x:Math.round(618*SX),y:Math.round(238*SY)}] },
+      { pathCells: [[31,5],[30,7],[28,8],[26,10],[25,11],[23,12],[21,13],[19,13],[17,12],[14,11],[11,11],[8,12],[6,13],[3,11]], slots: [{x:Math.round(220*SX),y:Math.round(140*SY)},{x:Math.round(400*SX),y:Math.round(120*SY)},{x:Math.round(400*SX),y:Math.round(340*SY)},{x:Math.round(580*SX),y:Math.round(240*SY)},{x:Math.round(660*SX),y:Math.round(160*SY)}] },
+      { pathCells: [[31,14],[30,14],[28,12],[26,11],[25,11],[23,11],[21,12],[19,13],[17,13],[14,12],[11,11],[8,11],[6,11],[3,11]], slots: [{x:Math.round(300*SX),y:Math.round(100*SY)},{x:Math.round(300*SX),y:Math.round(380*SY)},{x:Math.round(500*SX),y:Math.round(260*SY)},{x:Math.round(620*SX),y:Math.round(140*SY)},{x:Math.round(620*SX),y:Math.round(380*SY)}] }
+    ];
+
+    function dist(ax, ay, bx, by) { return Math.hypot(bx - ax, by - ay); }
+
+    const PreloadScene = new Phaser.Class({
+      Extends: Phaser.Scene,
+      initialize: function() { Phaser.Scene.call(this, { key: 'Preload' }); },
+      create: function() {
+        const tileSize = TILE;
+        let loadError = false;
+        let gameStarted = false;
+        const startGame = (useCustom) => {
+          if (gameStarted) return;
+          gameStarted = true;
+          this.scene.start('Game', { useCustomArt: useCustom });
+        };
+        this.load.on('loaderror', () => { loadError = true; });
+
+        function makeHeroTexture(scene) {
+          const c = document.createElement('canvas');
+          c.width = 56;
+          c.height = 48;
+          const ctx = c.getContext('2d');
+          ctx.imageSmoothingEnabled = false;
+          const p = (x, y, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, 2, 2); };
+          const fill = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
+          for (let i = 0; i < 28; i++) for (let j = 0; j < 24; j++) {
+            const x = i * 2, y = j * 2;
+            if (y >= 8 && y <= 22 && x >= 6 && x <= 46) fill(x, y, 2, 2, '#5c4033');
+            if (y >= 20 && y <= 44 && (x >= 4 && x <= 12 || x >= 36 && x <= 44)) fill(x, y, 2, 2, '#4a3728');
+            if (y >= 2 && y <= 18 && x >= 14 && x <= 42) fill(x, y, 2, 2, '#2c5282');
+            if (y >= 0 && y <= 12 && x >= 22 && x <= 34) fill(x, y, 2, 2, '#f5deb3');
+            if (y >= 0 && y <= 6 && x >= 24 && x <= 32) fill(x, y, 2, 2, '#ffd700');
+            if (y >= 4 && y <= 24 && x >= 48 && x <= 54) fill(x, y, 2, 2, '#6b4423');
+          }
+          scene.textures.addCanvas('hero_fallback', c);
+        }
+        function makeEnemyTexture(scene) {
+          const c = document.createElement('canvas');
+          c.width = 32;
+          c.height = 36;
+          const ctx = c.getContext('2d');
+          ctx.imageSmoothingEnabled = false;
+          const fill = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x, y, w, h); };
+          fill(0, 0, 32, 36, 'rgba(0,0,0,0)');
+          fill(8, 4, 16, 12, '#4a4a4a');
+          fill(6, 14, 20, 18, '#8b2914');
+          fill(4, 28, 6, 8, '#6b5344');
+          fill(22, 28, 6, 8, '#6b5344');
+          fill(14, 2, 4, 14, '#5a5a5a');
+          scene.textures.addCanvas('enemy_fallback', c);
+        }
+        makeHeroTexture(this);
+        makeEnemyTexture(this);
+
+        const particleCanvas = document.createElement('canvas');
+        particleCanvas.width = 16;
+        particleCanvas.height = 16;
+        const pctx = particleCanvas.getContext('2d');
+        pctx.fillStyle = '#fff';
+        pctx.beginPath();
+        pctx.arc(8, 8, 7, 0, Math.PI * 2);
+        pctx.fill();
+        this.textures.addCanvas('particle', particleCanvas);
+
+        this.load.image('hero_custom', 'assets/hero.png');
+        this.load.image('enemy_custom', 'assets/enemy.png');
+        this.load.once('complete', () => { startGame(!loadError); });
+        this.load.once('loaderror', () => { this.time.delayedCall(50, () => startGame(false)); });
+        this.load.start();
+      }
+    });
+
+    const GameScene = new Phaser.Class({
+      Extends: Phaser.Scene,
+      initialize: function() { Phaser.Scene.call(this, { key: 'Game' }); },
+      create: function() {
+        const w = this.cameras.main.width;
+        const h = this.cameras.main.height;
+        const data = this.scene.settings.data || {};
+        this.useCustomArt = data.useCustomArt === true;
+        const heroKey = this.useCustomArt && this.textures.exists('hero_custom') ? 'hero_custom' : 'hero_fallback';
+        const enemyKey = this.useCustomArt && this.textures.exists('enemy_custom') ? 'enemy_custom' : 'enemy_fallback';
+        this.heroKey = heroKey;
+        this.enemyKey = enemyKey;
+
+        const tileSize = TILE;
+        const grassCanvas = document.createElement('canvas');
+        grassCanvas.width = tileSize * 4;
+        grassCanvas.height = tileSize * 4;
+        const gctx = grassCanvas.getContext('2d');
+        for (let i = 0; i < 4; i++) {
+          for (let j = 0; j < 4; j++) {
+            const shade = 0.92 + Math.random() * 0.12;
+            gctx.fillStyle = `rgb(${Math.floor(74*shade)}, ${Math.floor(124*shade)}, ${Math.floor(89*shade)})`;
+            gctx.fillRect(i * tileSize, j * tileSize, tileSize, tileSize);
+            gctx.strokeStyle = 'rgba(0,0,0,0.06)';
+            gctx.strokeRect(i * tileSize, j * tileSize, tileSize, tileSize);
+          }
+        }
+        this.textures.addCanvas('grass', grassCanvas);
+
+        const dirtCanvas = document.createElement('canvas');
+        dirtCanvas.width = tileSize;
+        dirtCanvas.height = tileSize;
+        const dctx = dirtCanvas.getContext('2d');
+        dctx.fillStyle = '#8b7355';
+        dctx.fillRect(0, 0, tileSize, tileSize);
+        dctx.fillStyle = 'rgba(0,0,0,0.08)';
+        dctx.fillRect(2, 2, tileSize - 4, tileSize - 4);
+        this.textures.addCanvas('dirt', dirtCanvas);
+
+        this.mapIndex = 0;
+        this.buildTerrainAndSlots();
+        this.terrainLayer.setDepth(0);
+
+        this.deathParticles = this.add.particles(0, 0, 'particle', {
+          x: 0, y: 0, lifespan: 400, speed: { min: 80, max: 160 }, scale: { start: 0.5, end: 0 },
+          tint: [0xffffff, 0xffeb3b], emitting: false, quantity: 14
+        }).setDepth(150);
+        this.coinParticles = this.add.particles(0, 0, 'particle', {
+          x: 0, y: 0, lifespan: 280, speed: { min: 30, max: 70 }, scale: { start: 0.35, end: 0 },
+          tint: 0xffd700, emitting: false, quantity: 8
+        }).setDepth(150);
+
+        this.hero = this.add.image(Math.round(180 * SX), Math.round(260 * SY), heroKey).setDisplaySize(56, 48).setOrigin(0.5, 0.5).setDepth(100);
+        this.hero.facingAngle = 0;
+        this.hero.lastShot = 0;
+
+        this.baseSprite = this.add.circle(BASE_X, BASE_Y, 40, 0x4e8b42).setStrokeStyle(3, 0x2d5828).setDepth(100);
+        this.baseLabel = this.add.text(BASE_X, BASE_Y + 4, 'BASE', { font: '12px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(100);
+
+        this.enemies = this.add.group();
+        this.arrows = this.add.group();
+        this.towerProjectiles = this.add.group();
+        this.coinsGroup = this.add.group();
+        this.towers = this.add.group();
+
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.input.keyboard.on('keydown-P', () => {
+          if (this.gameOver) return;
+          this.paused = !this.paused;
+          document.getElementById('pauseOverlay').classList.toggle('show', this.paused);
+        });
+        this.input.keyboard.on('keydown-R', () => {
+          this.scene.restart();
+          document.getElementById('gameOver').classList.remove('show');
+          document.getElementById('gameWin').classList.remove('show');
+          document.getElementById('pauseOverlay').classList.remove('show');
+          document.getElementById('levelPassedOverlay').classList.remove('show');
+        });
+        this.input.keyboard.on('keydown', (e) => {
+          if ((e.key === 'Enter' || e.keyCode === 13) && this.levelPassedWaitingEnter) {
+            this.levelPassedWaitingEnter = false;
+            const levelOverlay = document.getElementById('levelPassedOverlay');
+            if (levelOverlay) { levelOverlay.classList.remove('show'); levelOverlay.style.display = 'none'; }
+            if (this.wave >= MAX_LEVEL) {
+              document.getElementById('gameWin').classList.add('show');
+              document.querySelector('#gameWin h2').textContent = 'Level 5 complete!';
+              document.querySelector('#gameWin p').textContent = 'You won!';
+              return;
+            }
+            this.mapIndex = (this.mapIndex + 1) % MAP_CONFIGS.length;
+            this.buildTerrainAndSlots();
+            this.wave++;
+            this.startWave();
+          }
+        });
+
+        this.coins = 0;
+        this.baseHp = BASE_HP_MAX;
+        this.wave = 1;
+        this.gameOver = false;
+        this.paused = false;
+        this.levelPassedWaitingEnter = false;
+        this.waveInProgress = false;
+        this.waveEnemiesToSpawn = 0;
+        this.waveSpawnTimer = 0;
+        this.waveCompleteTimer = 0;
+        this.enemyData = [];
+        this.arrowData = [];
+        this.towerData = [];
+        this.towerProjData = [];
+        this.enemyArrowData = [];
+        this.enemyArrows = this.add.group();
+        this.coinData = [];
+        this.startWave();
+      },
+
+      buildTerrainAndSlots: function() {
+        const w = this.cameras.main.width;
+        const h = this.cameras.main.height;
+        const tileSize = TILE;
+        const mapW = Math.ceil(w / tileSize) + 2;
+        const mapH = Math.ceil(h / tileSize) + 2;
+        if (this.terrainLayer) {
+          this.terrainLayer.destroy(true);
+        }
+        const mapData = [];
+        for (let row = 0; row < mapH; row++) {
+          mapData[row] = [];
+          for (let col = 0; col < mapW; col++) mapData[row][col] = 0;
+        }
+        const pathCells = MAP_CONFIGS[this.mapIndex].pathCells;
+        pathCells.forEach(([c, r]) => {
+          if (r >= 0 && r < mapH && c >= 0 && c < mapW) mapData[r][c] = 1;
+          if (r + 1 < mapH) mapData[r + 1][c] = 1;
+        });
+        this.terrainLayer = this.add.container(0, 0).setDepth(0);
+        for (let row = 0; row < mapH; row++) {
+          for (let col = 0; col < mapW; col++) {
+            const key = mapData[row][col] === 1 ? 'dirt' : 'grass';
+            const tile = this.add.image(col * tileSize, row * tileSize, key).setOrigin(0, 0);
+            this.terrainLayer.add(tile);
+          }
+        }
+        if (this.towerSlots && this.towerSlots.length) {
+          this.towerSlots.forEach(s => { s.zone.destroy(); s.costText.destroy(); });
+        }
+        this.towerSlots = [];
+        const slots = MAP_CONFIGS[this.mapIndex].slots;
+        slots.forEach(s => {
+          const cx = s.x + TOWER_SLOT_SIZE/2;
+          const cy = s.y + TOWER_SLOT_SIZE/2;
+          const zone = this.add.rectangle(cx, cy, TOWER_SLOT_SIZE, TOWER_SLOT_SIZE, 0, 0).setStrokeStyle(2, 0xffffff, 0.5).setOrigin(0.5).setDepth(50);
+          const costText = this.add.text(cx, cy - 4, '0/' + TOWER_COST, { font: 'bold 11px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(50);
+          this.towerSlots.push({ zone, costText, cx, cy, progress: 0 });
+        });
+      },
+
+      hasTowerAt: function(cx, cy) {
+        return this.towerData.some(t => dist(t.x, t.y, cx, cy) < 10);
+      },
+
+      spawnTower: function(x, y) {
+        const tower = this.add.circle(x, y, 20, 0x6b6b6b).setStrokeStyle(2, 0x4a4a4a).setDepth(100);
+        this.towers.add(tower);
+        this.towerData.push({ x, y, lastShot: 0 });
+      },
+
+      startWave: function() {
+        this.waveInProgress = true;
+        this.waveEnemiesToSpawn = WAVE_ENEMY_COUNT_BASE + (this.wave - 1) * WAVE_ENEMY_COUNT_INCREMENT;
+        this.waveSpawnTimer = 0;
+      },
+
+      pickEnemyTypeForLevel: function(level) {
+        const r = Math.random();
+        if (level === 1) return { id: 'grunt', hp: 1, speed: 90, coins: 5 };
+        if (level === 2) return { id: 'grunt', hp: 1, speed: 115, coins: 5 };
+        if (level === 3) {
+          if (r < 0.6) return { id: 'grunt', hp: 1, speed: 100, coins: 5 };
+          if (r < 0.9) return { id: 'armored', hp: 3, speed: 65, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 120, coins: 8 };
+        }
+        if (level === 4) {
+          if (r < 0.5) return { id: 'grunt', hp: 1, speed: 110, coins: 5 };
+          if (r < 0.85) return { id: 'armored', hp: 3, speed: 75, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 130, coins: 8 };
+        }
+        if (r < 0.4) return { id: 'grunt', hp: 1, speed: 120, coins: 5 };
+        if (r < 0.8) return { id: 'armored', hp: 3, speed: 80, coins: 12 };
+        return { id: 'fast', hp: 2, speed: 140, coins: 8 };
+      },
+
+      spawnEnemy: function() {
+        const type = this.pickEnemyTypeForLevel(this.wave);
+        const y = Math.round(80 * SY) + Math.random() * (this.cameras.main.height - Math.round(160 * SY));
+        const enemy = this.add.image(this.cameras.main.width + 20, y, this.enemyKey).setDisplaySize(32, 36).setOrigin(0.5, 0.5).setFlipX(true).setDepth(100);
+        if (type.id === 'armored') enemy.setTint(0x5555ff);
+        if (type.id === 'fast') enemy.setTint(0xffaa00);
+        this.enemies.add(enemy);
+        this.enemyData.push({ obj: enemy, hp: type.hp, maxHp: type.hp, speed: type.speed, coins: type.coins });
+      },
+
+      update: function(time, delta) {
+        if (this.gameOver) return;
+        if (this.paused) return;
+        const dt = delta / 1000;
+        const w = this.cameras.main.width;
+        const h = this.cameras.main.height;
+
+        if (this.cursors.left.isDown) {
+          this.hero.x = Math.max(MARGIN_X, this.hero.x - HERO_SPEED * dt);
+          this.hero.facingAngle = Math.PI;
+        }
+        if (this.cursors.right.isDown) {
+          this.hero.x = Math.min(w - MARGIN_X, this.hero.x + HERO_SPEED * dt);
+          this.hero.facingAngle = 0;
+        }
+        if (this.cursors.up.isDown) {
+          this.hero.y = Math.max(MARGIN_Y, this.hero.y - HERO_SPEED * dt);
+          this.hero.facingAngle = -Math.PI / 2;
+        }
+        if (this.cursors.down.isDown) {
+          this.hero.y = Math.min(h - MARGIN_Y, this.hero.y + HERO_SPEED * dt);
+          this.hero.facingAngle = Math.PI / 2;
+        }
+        this.hero.rotation = this.hero.facingAngle;
+
+        if (this.waveInProgress) {
+          this.waveSpawnTimer += delta;
+          if (this.waveEnemiesToSpawn > 0 && this.waveSpawnTimer >= WAVE_SPAWN_INTERVAL_MS) {
+            this.waveSpawnTimer = 0;
+            this.spawnEnemy();
+            this.waveEnemiesToSpawn--;
+          }
+        } else if (!this.levelPassedWaitingEnter && this.enemyData.length === 0) this.startWave();
+
+        this.towerSlots.forEach(slot => {
+          if (this.hasTowerAt(slot.cx, slot.cy)) {
+            slot.zone.setVisible(false);
+            slot.costText.setVisible(false);
+            return;
+          }
+          const inZone = Math.abs(this.hero.x - slot.cx) <= TOWER_SLOT_SIZE/2 && Math.abs(this.hero.y - slot.cy) <= TOWER_SLOT_SIZE/2;
+          if (inZone && this.coins > 0 && slot.progress < TOWER_COST) {
+            const deposit = Math.min(this.coins, TOWER_COST - slot.progress);
+            this.coins -= deposit;
+            slot.progress += deposit;
+            if (slot.progress >= TOWER_COST) {
+              this.spawnTower(slot.cx, slot.cy);
+              slot.progress = TOWER_COST;
+            }
+          }
+          slot.costText.setText(slot.progress + '/' + TOWER_COST);
+        });
+
+        this.enemyData.forEach(ed => {
+          const dToBase = dist(ed.obj.x, ed.obj.y, BASE_X, BASE_Y);
+          if (dToBase <= ENEMY_BASE_SHOOT_RANGE) {
+            if (!ed.lastShotAtBase) ed.lastShotAtBase = 0;
+            if (time - ed.lastShotAtBase >= ENEMY_SHOOT_COOLDOWN_MS) {
+              ed.lastShotAtBase = time;
+              if (!this.enemyArrowData) this.enemyArrowData = [];
+              const vx = (BASE_X - ed.obj.x) / (dToBase || 1) * 280;
+              const vy = (BASE_Y - ed.obj.y) / (dToBase || 1) * 280;
+              const proj = this.add.line(ed.obj.x, ed.obj.y, 0, 0, vx * 0.08, vy * 0.08, 0xff4444).setDepth(100);
+              if (!this.enemyArrows) this.enemyArrows = this.add.group();
+              this.enemyArrows.add(proj);
+              this.enemyArrowData.push({
+                x: ed.obj.x, y: ed.obj.y, vx: vx, vy: vy, damage: BASE_DAMAGE_PER_ARROW, obj: proj
+              });
+            }
+          } else {
+            const dx = BASE_X - ed.obj.x, dy = BASE_Y - ed.obj.y;
+            const len = Math.hypot(dx, dy) || 1;
+            ed.obj.x += (dx / len) * ed.speed * dt;
+            ed.obj.y += (dy / len) * ed.speed * dt;
+          }
+        });
+        this.enemyData.filter(ed => ed.hp <= 0).forEach(ed => ed.obj.destroy());
+        this.enemyData = this.enemyData.filter(ed => ed.hp > 0);
+
+        let nearest = null;
+        let nearestD = HERO_SHOOT_RANGE + 1;
+        this.enemyData.forEach(ed => {
+          const d = dist(this.hero.x, this.hero.y, ed.obj.x, ed.obj.y);
+          if (d <= HERO_SHOOT_RANGE && d < nearestD) { nearestD = d; nearest = ed; }
+        });
+        if (nearest && time - this.hero.lastShot >= HERO_SHOOT_COOLDOWN_MS) {
+          this.hero.lastShot = time;
+          this.hero.facingAngle = Math.atan2(nearest.obj.y - this.hero.y, nearest.obj.x - this.hero.x);
+          this.hero.rotation = this.hero.facingAngle;
+          const dx = nearest.obj.x - this.hero.x, dy = nearest.obj.y - this.hero.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const arrow = this.add.line(this.hero.x, this.hero.y, 0, 0, (dx/len)*20, (dy/len)*20, 0xffffff).setDepth(100);
+          this.arrows.add(arrow);
+          this.arrowData.push({
+            x: this.hero.x, y: this.hero.y, vx: (dx/len)*ARROW_SPEED, vy: (dy/len)*ARROW_SPEED, target: nearest
+          });
+        }
+
+        this.arrowData.forEach((a, i) => {
+          a.x += a.vx * dt;
+          a.y += a.vy * dt;
+          const arr = this.arrows.getChildren()[i];
+          if (arr) { arr.x = a.x; arr.y = a.y; }
+          const d = dist(a.x, a.y, a.target.obj.x, a.target.obj.y);
+          if (d < ENEMY_R + 8) {
+            a.target.hp -= 1;
+            if (a.target.hp <= 0) {
+              this.coinData.push({ x: a.target.obj.x, y: a.target.obj.y, amount: a.target.coins != null ? a.target.coins : COINS_PER_KILL });
+              this.deathParticles.emitParticleAt(a.target.obj.x, a.target.obj.y);
+            }
+            a.hit = true;
+          }
+        });
+        this.arrowData = this.arrowData.filter(a => !a.hit);
+        while (this.arrows.getChildren().length > this.arrowData.length)
+          this.arrows.getChildren()[this.arrows.getChildren().length - 1].destroy();
+
+        this.towerData.forEach((t, ti) => {
+          let near = null, nearD = TOWER_RANGE + 1;
+          this.enemyData.forEach(ed => {
+            const d = dist(t.x, t.y, ed.obj.x, ed.obj.y);
+            if (d <= TOWER_RANGE && d < nearD) { nearD = d; near = ed; }
+          });
+          if (near && time - t.lastShot >= TOWER_COOLDOWN_MS) {
+            t.lastShot = time;
+            const dx = near.obj.x - t.x, dy = near.obj.y - t.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const proj = this.add.circle(t.x, t.y, 5, 0xffffff).setDepth(100);
+            this.towerProjectiles.add(proj);
+            this.towerProjData.push({ x: t.x, y: t.y, vx: (dx/len)*360, vy: (dy/len)*360, target: near });
+          }
+        });
+
+        this.towerProjData.forEach((p, i) => {
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          const proj = this.towerProjectiles.getChildren()[i];
+          if (proj) { proj.x = p.x; proj.y = p.y; }
+          if (dist(p.x, p.y, p.target.obj.x, p.target.obj.y) < ENEMY_R + 8) {
+            p.target.hp -= 1;
+            if (p.target.hp <= 0) {
+              this.coinData.push({ x: p.target.obj.x, y: p.target.obj.y, amount: p.target.coins != null ? p.target.coins : COINS_PER_KILL });
+              this.deathParticles.emitParticleAt(p.target.obj.x, p.target.obj.y);
+            }
+            p.hit = true;
+          }
+        });
+        this.towerProjData = this.towerProjData.filter(p => !p.hit);
+        while (this.towerProjectiles.getChildren().length > this.towerProjData.length)
+          this.towerProjectiles.getChildren()[this.towerProjectiles.getChildren().length - 1].destroy();
+
+        if (this.enemyArrowData && this.enemyArrowData.length) {
+          this.enemyArrowData.forEach(ea => {
+            ea.x += ea.vx * dt;
+            ea.y += ea.vy * dt;
+            if (ea.obj && ea.obj.active) {
+              ea.obj.x = ea.x;
+              ea.obj.y = ea.y;
+            }
+            if (dist(ea.x, ea.y, BASE_X, BASE_Y) < 45) {
+              this.baseHp -= ea.damage;
+              if (ea.obj && ea.obj.destroy) ea.obj.destroy();
+              ea.hit = true;
+            }
+          });
+          this.enemyArrowData = this.enemyArrowData.filter(ea => !ea.hit);
+        }
+
+        this.coinData = this.coinData.filter(c => {
+          if (dist(this.hero.x, this.hero.y, c.x, c.y) <= COIN_PICKUP_RANGE) {
+            this.coins += (c.amount != null ? c.amount : COINS_PER_KILL);
+            this.coinParticles.emitParticleAt(c.x, c.y);
+            return false;
+          }
+          return true;
+        });
+        while (this.coinsGroup.getChildren().length > this.coinData.length)
+          this.coinsGroup.getChildren()[this.coinsGroup.getChildren().length - 1].destroy();
+        while (this.coinsGroup.getChildren().length < this.coinData.length) {
+          const c = this.coinData[this.coinsGroup.getChildren().length];
+          const coin = this.add.circle(c.x, c.y, 10, 0xffd700).setStrokeStyle(2, 0xb8860b).setDepth(100);
+          this.coinsGroup.add(coin);
+        }
+        this.coinData.forEach((c, i) => {
+          const coin = this.coinsGroup.getChildren()[i];
+          if (coin) { coin.x = c.x; coin.y = c.y; }
+        });
+
+        if (this.baseHp <= 0) {
+          this.gameOver = true;
+          document.getElementById('gameOver').classList.add('show');
+        }
+
+        document.getElementById('coinDisplay').textContent = this.coins;
+        document.getElementById('baseHpDisplay').textContent = Math.max(0, Math.ceil(this.baseHp));
+        document.getElementById('waveDisplay').textContent = this.wave;
+        this.baseSprite.setFillStyle(this.baseHp / BASE_HP_MAX > 0.5 ? 0x4e8b42 : this.baseHp / BASE_HP_MAX > 0.25 ? 0xc9a227 : 0xc0392b);
+
+        if (this.waveInProgress && this.waveEnemiesToSpawn <= 0 && this.enemyData.length === 0) {
+          this.waveInProgress = false;
+          this.levelPassedWaitingEnter = true;
+          const overlay = document.getElementById('levelPassedOverlay');
+          if (overlay) {
+            const h2 = overlay.querySelector('h2');
+            if (h2) h2.textContent = 'Level ' + this.wave + ' passed!';
+            overlay.classList.add('show');
+            overlay.style.display = 'flex';
+          }
+        }
+      }
+    });
+
+    const config = {
+      type: Phaser.AUTO,
+      width: GAME_WIDTH,
+      height: GAME_HEIGHT,
+      parent: 'game-container',
+      backgroundColor: '#2d5a27',
+      scene: [PreloadScene, GameScene],
+      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+      physics: { default: 'arcade', arcade: { debug: false } }
+    };
+    const game = new Phaser.Game(config);
+
+    document.getElementById('restartBtn').onclick = () => {
+      game.scene.getScene('Game').scene.restart();
+      document.getElementById('gameOver').classList.remove('show');
+      document.getElementById('levelPassedOverlay').classList.remove('show');
+    };
+    document.getElementById('continueBtn').onclick = () => document.getElementById('gameWin').classList.remove('show');
+  </script>
+</body>
+</html>
