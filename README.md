@@ -4,8 +4,9 @@ A browser-based MVP: you control a hero defending a base from waves of enemies. 
 
 ## Two versions
 
+- **`index.html`** (site root) – Redirects to **`index-phaser.html`** so **GitHub Pages** serves the latest build at `https://bmpalacio.github.io/hero-tower/`.
 - **`index-phaser.html`** (recommended) – Built with **[Phaser 3](https://phaser.io)** (WebGL). Uses a proper game engine with tile-based terrain, particle effects (death bursts, coin pickups), and **sprite-based** hero and enemies (pixel-art by default). For a **more realistic look**, add your own art: see **`assets/ASSETS.md`** – put `hero.png` and `enemy.png` in the `assets/` folder (e.g. from [Kenney](https://kenney.nl) or [OpenGameArt](https://opengameart.org)) and the game will use them automatically.
-- **`index.html`** – Original canvas-only version. Works fully offline; no dependencies.
+- **`index-canvas.html`** – Original canvas-only version. Works fully offline; no dependencies.
 
 ## How to play
 
@@ -20,10 +21,10 @@ A browser-based MVP: you control a hero defending a base from waves of enemies. 
 
 **Project location:** `/Users/b/vibe coding/hero-tower-defense/`
 
-Open the Phaser version in a browser:
+Open the game in a browser (root redirects to Phaser):
 
 ```bash
-open "/Users/b/vibe coding/hero-tower-defense/index-phaser.html"
+open "/Users/b/vibe coding/hero-tower-defense/index.html"
 ```
 
 Or run a local server from the project folder:
