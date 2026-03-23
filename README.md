@@ -1,49 +1,35 @@
 # Hero Tower Defense
 
-A browser-based MVP: you control a hero defending a base from waves of enemies. Move with arrow keys, auto-shoot when in range, collect coins from kills, and buy defense towers.
+Browser game: move a hero, defend your base, survive **10 levels**. Arrow keys (or tap on mobile), auto-shoot, coins from kills, **towers** and (from level 6) **walls** on enemy paths.
 
-## Two versions
+## Files in this repo
 
-- **`index.html`** (site root) – Redirects to **`index-phaser.html`** so **GitHub Pages** serves the latest build at `https://bmpalacio.github.io/hero-tower/`.
-- **`index-phaser.html`** (recommended) – Built with **[Phaser 3](https://phaser.io)** (WebGL). Uses a proper game engine with tile-based terrain, particle effects (death bursts, coin pickups), and **sprite-based** hero and enemies (pixel-art by default). For a **more realistic look**, add your own art: see **`assets/ASSETS.md`** – put `hero.png` and `enemy.png` in the `assets/` folder (e.g. from [Kenney](https://kenney.nl) or [OpenGameArt](https://opengameart.org)) and the game will use them automatically.
-- **`index-canvas.html`** – Original canvas-only version. Works fully offline; no dependencies.
+| File | Purpose |
+|------|--------|
+| **`index.html`** | Entry point for **GitHub Pages** — redirects to the Phaser build. |
+| **`index-phaser.html`** | The game ([Phaser 3](https://phaser.io)). |
+| **`assets/`** | Optional `hero.png` / `enemy.png` — see **`assets/ASSETS.md`**. |
+
+Everything else is optional documentation; there is no second engine build in this repo.
 
 ## How to play
 
-- **Arrow keys** – Move the hero
-- **Auto-shoot** – Hero shoots arrows at the nearest enemy when in range
-- **Coins** – Enemies drop coins when killed; walk near them to collect
-- **Towers** – **Walk over** a build zone (dashed square) with 50+ coins to buy a tower
-- **Levels** – More enemies per level; mix of grunts (1 HP), armored (3 HP), fast (2 HP)
-- **Maps** – The map (path + tower slots) changes after each level (3 layouts rotate)
+- **Move** – Arrow keys or tap to move
+- **Shoot** – Nearest enemy in range
+- **Coins** – Walk over drops to collect
+- **Towers** – Stand on a dashed build zone with **50** coins to fund a tower
+- **Walls** – From **level 6**, brown pads on lanes cost **100** coins and block enemies until destroyed
+- **Levels** – Map layout can flip each level; difficulty ramps up
 
 ## Run locally
 
-**Project location:** `/Users/b/vibe coding/hero-tower-defense/`
-
-Open the game in a browser (root redirects to Phaser):
+Open `index.html` or `index-phaser.html` in a browser, or from the project folder:
 
 ```bash
-open "/Users/b/vibe coding/hero-tower-defense/index.html"
-```
-
-Or run a local server from the project folder:
-
-```bash
-cd "/Users/b/vibe coding/hero-tower-defense"
 npx serve .
-# then open http://localhost:3000 and click index-phaser.html
+# open http://localhost:3000
 ```
 
-## Use as a separate GitHub project
+## Optional art
 
-To push this folder to its own GitHub repo:
-
-```bash
-cd "/Users/b/vibe coding/hero-tower-defense"
-git init
-git add .
-git commit -m "Initial commit: Hero Tower Defense MVP"
-git remote add origin https://github.com/YOUR_USERNAME/hero-tower-defense.git
-git push -u origin main
-```
+Add **`assets/hero.png`** and **`assets/enemy.png`** for custom sprites — see **`assets/ASSETS.md`**.
