@@ -14,6 +14,7 @@
     .hud .coins { color: #ffd54f; }
     .hud .base-hp { color: #81c784; }
     .hud .wave { color: #ef9a9a; }
+    .hud .hero-hp { color: #90caf9; }
     #game-container { border-radius: 12px; overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 2px rgba(255,255,255,0.06); }
     .instructions { margin-top: 10px; font-size: 11px; color: #6b9b6b; text-align: center; max-width: 520px; }
     #towerPrompt { position: fixed; background: rgba(30,60,30,0.95); border: 1px solid #4caf50; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #fff; display: none; pointer-events: none; z-index: 10; }
@@ -51,10 +52,11 @@
   <div class="hud">
     <span class="coins">Coins: <strong id="coinDisplay">0</strong></span>
     <span class="base-hp">Base HP: <strong id="baseHpDisplay">100</strong></span>
+    <span class="hero-hp">Hero HP: <strong id="heroHpDisplay">500</strong></span>
     <span class="wave">Level: <strong id="waveDisplay">1</strong></span>
   </div>
   <div id="game-container"></div>
-  <div class="instructions">Arrow keys – move · Auto-shoot in range · Walk over a build zone to deposit coins (50 to build tower) · Map changes each level</div>
+  <div class="instructions">Arrow keys – move · Auto-shoot · Towers <strong>50</strong> (grey circle, green→red ring = HP) · Walls <strong>100</strong> (level 6+, brown on path) block lanes · Walk zones again to <strong>rebuild</strong> after either is destroyed · Map changes each level</div>
   <div class="controls">P – Pause &nbsp; R – Reset</div>
   <div id="towerPrompt"></div>
   <div class="overlay" id="pauseOverlay" style="display: none;">
@@ -63,7 +65,8 @@
   </div>
   <div class="overlay" id="levelPassedOverlay" style="display: none;">
     <h2 style="color: #81c784;">Level passed!</h2>
-    <p style="color: #fff;">Press Enter to continue</p>
+    <p style="color: #fff;">Press <strong>Enter</strong> or <strong>Space</strong> when you’re ready for the next level.</p>
+    <p style="color: #a5d6a7; font-size: 0.95rem; margin-top: 12px; max-width: 340px; text-align: center; line-height: 1.4;">Collect any coins still on the field—they carry over and help you build towers for the next wave.</p>
   </div>
   <div class="overlay" id="gameOver">
     <h2>Base Destroyed</h2>
@@ -88,8 +91,14 @@
     const MARGIN_X = Math.round(50 * SX);
     const MARGIN_Y = Math.round(50 * SY);
     const BASE_HP_MAX = 100;
+    const HERO_HP_MAX = 500;
+    const TOWER_HP_MAX = 550;
     const BASE_DAMAGE_PER_ARROW = 10;
     const ENEMY_BASE_SHOOT_RANGE = 100;
+    const ENEMY_HERO_SHOOT_RANGE = 195;
+    const ENEMY_TOWER_SHOOT_RANGE = 175;
+    const ENEMY_DAMAGE_HERO = 9;
+    const ENEMY_DAMAGE_TOWER = 14;
     const ENEMY_SHOOT_COOLDOWN_MS = 800;
     const HERO_SPEED = 280;
     const HERO_SHOOT_RANGE = 180;
@@ -100,6 +109,12 @@
     const COIN_PICKUP_RANGE = 36;
     const COINS_PER_KILL = 5;
     const TOWER_COST = 50;
+    const WALL_COST = TOWER_COST * 2;
+    const WALL_HP_MAX = 160;
+    const WALL_BLOCK_RANGE = 54;
+    const ENEMY_WALL_SHOOT_RANGE = 185;
+    const ENEMY_DAMAGE_WALL = 13;
+    const WALL_CONTACT_DPS = 28;
     const TOWER_RANGE = 160;
     const TOWER_COOLDOWN_MS = 600;
     const WAVE_SPAWN_INTERVAL_MS = 350;
@@ -108,7 +123,7 @@
     const TOWER_SLOT_SIZE = 44;
     const TOWER_SLOT_OFFSET_FROM_PATH = 62;
     const MIN_SLOT_DISTANCE = 50;
-    const MAX_LEVEL = 5;
+    const MAX_LEVEL = 10;
     const ENEMY_TYPES = [
       { id: 'grunt', hp: 1, speed: 90, coins: 5 },
       { id: 'armored', hp: 3, speed: 65, coins: 12 },
@@ -254,9 +269,18 @@
         dctx.fillRect(2, 2, tileSize - 4, tileSize - 4);
         this.textures.addCanvas('dirt', dirtCanvas);
 
+        this.wave = 1;
         this.mapSequence = [];
-        for (let i = 0; i < MAX_LEVEL; i++) this.mapSequence.push(Math.floor(Math.random() * MAP_CONFIGS.length));
+        this.mapFlipHSeq = [];
+        this.mapFlipVSeq = [];
+        for (let i = 0; i < MAX_LEVEL; i++) {
+          this.mapSequence.push(Math.floor(Math.random() * MAP_CONFIGS.length));
+          this.mapFlipHSeq.push(Math.random() < 0.5);
+          this.mapFlipVSeq.push(Math.random() < 0.35);
+        }
         this.mapIndex = this.mapSequence[0];
+        this.walls = this.add.group();
+        this.wallData = [];
         this.buildTerrainAndSlots();
         this.terrainLayer.setDepth(0);
 
@@ -269,12 +293,16 @@
           tint: 0xffd700, emitting: false, quantity: 8
         }).setDepth(150);
 
-        this.hero = this.add.image(Math.round(180 * SX), Math.round(260 * SY), heroKey).setDisplaySize(56, 48).setOrigin(0.5, 0.5).setDepth(100);
+        const hx0 = Math.round(180 * SX);
+        const hy0 = Math.round(260 * SY);
+        const heroStartX = this.mapFlipH ? w - hx0 : hx0;
+        const heroStartY = this.mapFlipV ? h - hy0 : hy0;
+        this.hero = this.add.image(heroStartX, heroStartY, heroKey).setDisplaySize(56, 48).setOrigin(0.5, 0.5).setDepth(100);
         this.hero.facingAngle = 0;
         this.hero.lastShot = 0;
 
-        this.baseSprite = this.add.circle(BASE_X, BASE_Y, 40, 0x4e8b42).setStrokeStyle(3, 0x2d5828).setDepth(100);
-        this.baseLabel = this.add.text(BASE_X, BASE_Y + 4, 'BASE', { font: '12px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(100);
+        this.baseSprite = this.add.circle(this.baseX, this.baseY, 40, 0x4e8b42).setStrokeStyle(3, 0x2d5828).setDepth(100);
+        this.baseLabel = this.add.text(this.baseX, this.baseY + 4, 'BASE', { font: '12px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(100);
 
         this.enemies = this.add.group();
         this.arrows = this.add.group();
@@ -307,13 +335,16 @@
           document.getElementById('levelPassedOverlay').classList.remove('show');
         });
         this.input.keyboard.on('keydown', (e) => {
-          if ((e.key === 'Enter' || e.keyCode === 13) && this.levelPassedWaitingEnter) {
+          const advanceLevel =
+            e.key === 'Enter' || e.keyCode === 13 || e.key === ' ' || e.code === 'Space';
+          if (advanceLevel && this.levelPassedWaitingEnter) {
+            if (e.key === ' ' || e.code === 'Space') e.preventDefault();
             this.levelPassedWaitingEnter = false;
             const levelOverlay = document.getElementById('levelPassedOverlay');
             if (levelOverlay) { levelOverlay.classList.remove('show'); levelOverlay.style.display = 'none'; }
             if (this.wave >= MAX_LEVEL) {
               document.getElementById('gameWin').classList.add('show');
-              document.querySelector('#gameWin h2').textContent = 'Level 5 complete!';
+              document.querySelector('#gameWin h2').textContent = 'Level ' + MAX_LEVEL + ' complete!';
               document.querySelector('#gameWin p').textContent = 'You won!';
               const winBtn = document.querySelector('#gameWin button');
               if (winBtn) winBtn.textContent = 'Play Again';
@@ -323,6 +354,11 @@
             if (this.towers && this.towers.getChildren) {
               this.towers.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
               this.towers.clear(true, true);
+            }
+            this.wallData = [];
+            if (this.walls && this.walls.getChildren) {
+              this.walls.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
+              this.walls.clear(true, true);
             }
             this.towerProjData = [];
             if (this.towerProjectiles && this.towerProjectiles.getChildren) {
@@ -337,6 +373,14 @@
               });
               this.towerSlots = [];
             }
+            if (this.wallSlots && this.wallSlots.length) {
+              this.wallSlots.forEach(s => {
+                if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
+                if (s.zone && s.zone.destroy) s.zone.destroy();
+                if (s.costText && s.costText.destroy) s.costText.destroy();
+              });
+              this.wallSlots = [];
+            }
             this.wave++;
             this.mapIndex = this.mapSequence[this.wave - 1];
             this.buildTerrainAndSlots();
@@ -346,7 +390,7 @@
 
         this.coins = 0;
         this.baseHp = BASE_HP_MAX;
-        this.wave = 1;
+        this.heroHp = HERO_HP_MAX;
         this.gameOver = false;
         this.paused = false;
         this.levelPassedWaitingEnter = false;
@@ -374,6 +418,8 @@
           };
         }
         if (!this.introWaiting) this.startWave();
+        const goP = document.querySelector('#gameOver p');
+        if (goP) goP.textContent = 'Enemies overwhelmed your base.';
       },
 
       buildTerrainAndSlots: function() {
@@ -382,13 +428,29 @@
         const tileSize = TILE;
         const mapW = Math.ceil(w / tileSize) + 2;
         const mapH = Math.ceil(h / tileSize) + 2;
+        const waveIdx = Math.max(0, (this.wave || 1) - 1);
+        this.mapFlipH = !!this.mapFlipHSeq[waveIdx];
+        this.mapFlipV = !!this.mapFlipVSeq[waveIdx];
+        this.baseX = this.mapFlipH ? w - BASE_X : BASE_X;
+        this.baseY = this.mapFlipV ? h - BASE_Y : BASE_Y;
         if (this.terrainLayer) {
           this.terrainLayer.destroy(true);
         }
         const config = MAP_CONFIGS[this.mapIndex];
         const pathCount = (this.wave != null && this.wave >= 1) ? this.wave : 1;
-        const pathArrays = config.paths ? config.paths.slice(0, Math.min(pathCount, config.paths.length)) : [config.pathCells || []];
+        let pathArrays = config.paths ? config.paths.slice(0, Math.min(pathCount, config.paths.length)) : [config.pathCells || []];
+        for (let i = pathArrays.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const t = pathArrays[i];
+          pathArrays[i] = pathArrays[j];
+          pathArrays[j] = t;
+        }
         this.numPaths = pathArrays.length;
+        const flipCell = (c, r) => {
+          const c2 = this.mapFlipH ? (mapW - 1 - c) : c;
+          const r2 = this.mapFlipV ? (mapH - 1 - r) : r;
+          return [c2, r2];
+        };
         const mapData = [];
         for (let row = 0; row < mapH; row++) {
           mapData[row] = [];
@@ -396,12 +458,16 @@
         }
         pathArrays.forEach(pathCells => {
           pathCells.forEach(([c, r]) => {
-            if (r >= 0 && r < mapH && c >= 0 && c < mapW) mapData[r][c] = 1;
-            if (r + 1 < mapH) mapData[r + 1][c] = 1;
+            const [fc, fr] = flipCell(c, r);
+            if (fr >= 0 && fr < mapH && fc >= 0 && fc < mapW) mapData[fr][fc] = 1;
+            if (fr + 1 < mapH) mapData[fr + 1][fc] = 1;
           });
         });
         this.paths = pathArrays.map(pathCells => ({
-          waypoints: pathCells.map(([c, r]) => ({ x: c * tileSize + tileSize / 2, y: r * tileSize + tileSize / 2 }))
+          waypoints: pathCells.map(([c, r]) => {
+            const [fc, fr] = flipCell(c, r);
+            return { x: fc * tileSize + tileSize / 2, y: fr * tileSize + tileSize / 2 };
+          })
         }));
         this.terrainLayer = this.add.container(0, 0).setDepth(0);
         for (let row = 0; row < mapH; row++) {
@@ -419,6 +485,14 @@
           });
         }
         this.towerSlots = [];
+        if (this.wallSlots && this.wallSlots.length) {
+          this.wallSlots.forEach(s => {
+            if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
+            if (s.zone && s.zone.destroy) s.zone.destroy();
+            if (s.costText && s.costText.destroy) s.costText.destroy();
+          });
+        }
+        this.wallSlots = [];
         const off = TOWER_SLOT_OFFSET_FROM_PATH;
         const placed = [];
         this.paths.forEach((path, pathId) => {
@@ -447,24 +521,122 @@
             const progressBar = this.add.rectangle(cx - barW/2, cy + 6, barW, barH, 0x4caf50, 0.5).setOrigin(0, 0.5).setDepth(49);
             const zone = this.add.rectangle(cx, cy, TOWER_SLOT_SIZE, TOWER_SLOT_SIZE, 0, 0).setStrokeStyle(2, 0xffffff, 0.5).setOrigin(0.5).setDepth(50);
             const costText = this.add.text(cx, cy - 4, '0/' + TOWER_COST, { font: 'bold 11px Outfit', color: '#1a3d0a' }).setOrigin(0.5).setDepth(50);
-            this.towerSlots.push({ zone, costText, progressBar, cx, cy, progress: 0, pathId });
+            this.towerSlots.push({ kind: 'tower', zone, costText, progressBar, cx, cy, progress: 0, pathId });
           });
         });
+        const waveLv = this.wave || 1;
+        if (waveLv >= 6) {
+          const wallSlotSize = TOWER_SLOT_SIZE + 12;
+          this.paths.forEach((path, pathId) => {
+            const wp = path.waypoints;
+            if (wp.length < 3) return;
+            const segIdx = Math.max(1, Math.min(wp.length - 2, Math.floor(wp.length * 0.52)));
+            const w1 = wp[segIdx];
+            const w2 = wp[segIdx + 1];
+            const wx = (w1.x + w2.x) * 0.5;
+            const wy = (w1.y + w2.y) * 0.5;
+            const nearTowerPad = (this.towerSlots || []).some(
+              ts => ts.pathId === pathId && dist(ts.cx, ts.cy, wx, wy) < 78
+            );
+            if (nearTowerPad) return;
+            if (placed.some(p => dist(p.cx, p.cy, wx, wy) < MIN_SLOT_DISTANCE * 1.25)) return;
+            placed.push({ cx: wx, cy: wy });
+            const barW = wallSlotSize - 6;
+            const barH = 10;
+            const progressBar = this.add.rectangle(wx - barW / 2, wy + 8, barW, barH, 0x8d6e63, 0.55).setOrigin(0, 0.5).setDepth(49);
+            const zone = this.add.rectangle(wx, wy, wallSlotSize, wallSlotSize * 0.75, 0, 0).setStrokeStyle(2, 0x8d6e63, 0.85).setOrigin(0.5).setDepth(50);
+            const costText = this.add.text(wx, wy - 6, '0/' + WALL_COST, { font: 'bold 11px Outfit', color: '#3e2723' }).setOrigin(0.5).setDepth(50);
+            this.wallSlots.push({ kind: 'wall', zone, costText, progressBar, cx: wx, cy: wy, progress: 0, pathId });
+          });
+        }
+        if (this.baseSprite && this.baseSprite.setPosition) {
+          this.baseSprite.setPosition(this.baseX, this.baseY);
+          if (this.baseLabel && this.baseLabel.setPosition) this.baseLabel.setPosition(this.baseX, this.baseY + 4);
+        }
+        if (this.hero && this.hero.setPosition) {
+          const hx0 = Math.round(180 * SX);
+          const hy0 = Math.round(260 * SY);
+          this.hero.setPosition(this.mapFlipH ? w - hx0 : hx0, this.mapFlipV ? h - hy0 : hy0);
+        }
       },
 
       hasTowerAt: function(cx, cy) {
-        return this.towerData.some(t => dist(t.x, t.y, cx, cy) < 10);
+        return this.towerData.some(t => t.hp > 0 && dist(t.x, t.y, cx, cy) < 24);
+      },
+
+      syncOrphanedBuildSlots: function() {
+        (this.towerSlots || []).forEach(s => {
+          if ((s.kind || 'tower') !== 'tower') return;
+          if (!this.hasTowerAt(s.cx, s.cy) && s.progress >= TOWER_COST) s.progress = 0;
+        });
+        (this.wallSlots || []).forEach(s => {
+          if (!this.hasWallAt(s.cx, s.cy) && s.progress >= WALL_COST) s.progress = 0;
+        });
+      },
+
+      releaseTowerBuildSlot: function(worldX, worldY) {
+        (this.towerSlots || []).forEach(s => {
+          if ((s.kind || 'tower') === 'tower' && dist(s.cx, s.cy, worldX, worldY) < 38) s.progress = 0;
+        });
+      },
+
+      releaseWallBuildSlot: function(worldX, worldY) {
+        (this.wallSlots || []).forEach(s => {
+          if (dist(s.cx, s.cy, worldX, worldY) < 56) s.progress = 0;
+        });
+      },
+
+      applyTowerHpVisual: function(tw) {
+        if (!tw.sprite || tw.hp == null || !tw.maxHp) return;
+        tw.sprite.setAlpha(1);
+        const r = Math.max(0, tw.hp / tw.maxHp);
+        const stroke = r > 0.55 ? 0x43a047 : r > 0.28 ? 0xf9a825 : 0xc62828;
+        tw.sprite.setStrokeStyle(Math.min(4, 2 + Math.ceil((1 - r) * 2)), stroke);
+      },
+
+      hasWallAt: function(cx, cy) {
+        return (this.wallData || []).some(w => w.hp > 0 && dist(w.x, w.y, cx, cy) < 14);
+      },
+
+      getBlockingWall: function(ed) {
+        if (!this.wallData || !this.wallData.length) return null;
+        const wd = this.wallData.find(w => w.pathId === ed.pathId && w.hp > 0);
+        if (!wd) return null;
+        const dEnemyBase = dist(ed.obj.x, ed.obj.y, this.baseX, this.baseY);
+        const dWallBase = dist(wd.x, wd.y, this.baseX, this.baseY);
+        if (dEnemyBase <= dWallBase + 18) return null;
+        const dEw = dist(ed.obj.x, ed.obj.y, wd.x, wd.y);
+        if (dEw < WALL_BLOCK_RANGE) return wd;
+        return null;
       },
 
       spawnTower: function(x, y) {
-        const tower = this.add.circle(x, y, 20, 0x6b6b6b).setStrokeStyle(2, 0x4a4a4a).setDepth(100);
+        const tower = this.add.circle(x, y, 20, 0x78909c).setStrokeStyle(2, 0x43a047).setDepth(102);
         this.towers.add(tower);
-        this.towerData.push({ x, y, lastShot: 0 });
+        const td = { x, y, lastShot: 0, hp: TOWER_HP_MAX, maxHp: TOWER_HP_MAX, sprite: tower };
+        this.towerData.push(td);
+        this.applyTowerHpVisual(td);
+      },
+
+      spawnWall: function(x, y, pathId) {
+        const wall = this.add.rectangle(x, y, 80, 24, 0x5d4037).setStrokeStyle(3, 0x3e2723).setDepth(88);
+        wall.setAlpha(1);
+        this.walls.add(wall);
+        this.wallData.push({ x, y, pathId, hp: WALL_HP_MAX, maxHp: WALL_HP_MAX, sprite: wall });
       },
 
       startWave: function() {
         this.waveInProgress = true;
-        this.waveEnemiesToSpawn = WAVE_ENEMY_COUNT_BASE + (this.wave - 1) * WAVE_ENEMY_COUNT_INCREMENT;
+        const wv = this.wave || 1;
+        let count = WAVE_ENEMY_COUNT_BASE + (wv - 1) * WAVE_ENEMY_COUNT_INCREMENT;
+        if (wv > 5) count += (wv - 5) * 16;
+        if (wv > 7) count += (wv - 7) * 12;
+        if (wv >= 10) count += 20;
+        this.waveEnemiesToSpawn = count;
+        let interval = WAVE_SPAWN_INTERVAL_MS - (wv - 1) * 24;
+        if (wv > 5) interval -= (wv - 5) * 20;
+        if (wv > 8) interval -= (wv - 8) * 14;
+        this.waveSpawnInterval = Math.max(75, interval);
         this.waveSpawnTimer = 0;
       },
 
@@ -482,9 +654,35 @@
           if (r < 0.85) return { id: 'armored', hp: 3, speed: 75, coins: 12 };
           return { id: 'fast', hp: 2, speed: 130, coins: 8 };
         }
-        if (r < 0.4) return { id: 'grunt', hp: 1, speed: 120, coins: 5 };
-        if (r < 0.8) return { id: 'armored', hp: 3, speed: 80, coins: 12 };
-        return { id: 'fast', hp: 2, speed: 140, coins: 8 };
+        if (level === 5) {
+          if (r < 0.4) return { id: 'grunt', hp: 1, speed: 120, coins: 5 };
+          if (r < 0.8) return { id: 'armored', hp: 3, speed: 80, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 140, coins: 8 };
+        }
+        if (level === 6) {
+          if (r < 0.35) return { id: 'grunt', hp: 1, speed: 125, coins: 5 };
+          if (r < 0.8) return { id: 'armored', hp: 3, speed: 85, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 145, coins: 8 };
+        }
+        if (level === 7) {
+          if (r < 0.32) return { id: 'grunt', hp: 1, speed: 130, coins: 5 };
+          if (r < 0.78) return { id: 'armored', hp: 3, speed: 90, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 150, coins: 8 };
+        }
+        if (level === 8) {
+          if (r < 0.28) return { id: 'grunt', hp: 1, speed: 135, coins: 5 };
+          if (r < 0.75) return { id: 'armored', hp: 3, speed: 95, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 155, coins: 8 };
+        }
+        if (level === 9) {
+          if (r < 0.25) return { id: 'grunt', hp: 1, speed: 140, coins: 5 };
+          if (r < 0.72) return { id: 'armored', hp: 3, speed: 100, coins: 12 };
+          return { id: 'fast', hp: 2, speed: 160, coins: 8 };
+        }
+        if (r < 0.15) return { id: 'grunt', hp: 1, speed: 145, coins: 5 };
+        if (r < 0.25) return { id: 'armored', hp: 4, speed: 100, coins: 15 };
+        if (r < 0.68) return { id: 'armored', hp: 3, speed: 105, coins: 12 };
+        return { id: 'fast', hp: 2, speed: 165, coins: 8 };
       },
 
       spawnEnemy: function() {
@@ -498,14 +696,20 @@
         const enemy = this.add.image(start.x, start.y, this.enemyKey).setDisplaySize(32, 36).setOrigin(0.5, 0.5).setFlipX(true).setDepth(100);
         if (type.id === 'armored') enemy.setTint(0x5555ff);
         if (type.id === 'fast') enemy.setTint(0xffaa00);
+        let spd = type.speed;
+        const wv = this.wave || 1;
+        if (wv > 5) spd = Math.round(spd * (1 + (wv - 5) * 0.055));
+        if (wv > 8) spd = Math.round(spd * 1.06);
         this.enemies.add(enemy);
-        this.enemyData.push({ obj: enemy, hp: type.hp, maxHp: type.hp, speed: type.speed, coins: type.coins, pathIndex: 0, pathId: pathId });
+        this.enemyData.push({ obj: enemy, hp: type.hp, maxHp: type.hp, speed: spd, coins: type.coins, pathIndex: 0, pathId: pathId });
       },
 
       update: function(time, delta) {
         if (this.gameOver) return;
         if (this.paused) return;
-        const dt = delta / 1000;
+        const dms = delta > 0 ? delta : this.game.loop.delta || 16.67;
+        const clampedMs = Math.min(Math.max(dms, 8), 40);
+        const dt = clampedMs / 1000;
         const w = this.cameras.main.width;
         const h = this.cameras.main.height;
 
@@ -543,71 +747,152 @@
         this.hero.rotation = this.hero.facingAngle;
 
         if (this.waveInProgress) {
-          this.waveSpawnTimer += delta;
-          if (this.waveEnemiesToSpawn > 0 && this.waveSpawnTimer >= WAVE_SPAWN_INTERVAL_MS) {
+          this.waveSpawnTimer += clampedMs;
+          if (this.waveEnemiesToSpawn > 0 && this.waveSpawnTimer >= (this.waveSpawnInterval != null ? this.waveSpawnInterval : WAVE_SPAWN_INTERVAL_MS)) {
             this.waveSpawnTimer = 0;
             this.spawnEnemy();
             this.waveEnemiesToSpawn--;
           }
         } else if (!this.introWaiting && !this.levelPassedWaitingEnter && this.enemyData.length === 0) this.startWave();
 
-        this.towerSlots.forEach(slot => {
-          if (this.hasTowerAt(slot.cx, slot.cy)) {
+        this.coinData = this.coinData.filter(c => {
+          if (dist(this.hero.x, this.hero.y, c.x, c.y) <= COIN_PICKUP_RANGE) {
+            this.coins += (c.amount != null ? c.amount : COINS_PER_KILL);
+            this.coinParticles.emitParticleAt(c.x, c.y);
+            return false;
+          }
+          return true;
+        });
+        this.coins = Math.max(0, Math.round(this.coins));
+        this.syncOrphanedBuildSlots();
+
+        let fundSlot = null;
+        let fundDist = Infinity;
+        const considerFund = (slot) => {
+          const kind = slot.kind || 'tower';
+          const cost = kind === 'wall' ? WALL_COST : TOWER_COST;
+          if (kind === 'tower' && this.hasTowerAt(slot.cx, slot.cy)) return;
+          if (kind === 'wall' && this.hasWallAt(slot.cx, slot.cy)) return;
+          const hw = kind === 'wall' ? (TOWER_SLOT_SIZE + 12) / 2 : TOWER_SLOT_SIZE / 2;
+          const hh = kind === 'wall' ? (TOWER_SLOT_SIZE + 12) * 0.375 : TOWER_SLOT_SIZE / 2;
+          const inZone = Math.abs(this.hero.x - slot.cx) <= hw && Math.abs(this.hero.y - slot.cy) <= hh;
+          if (inZone && slot.progress < cost) {
+            const d = dist(this.hero.x, this.hero.y, slot.cx, slot.cy);
+            if (d < fundDist) { fundDist = d; fundSlot = slot; }
+          }
+        };
+        (this.towerSlots || []).forEach(considerFund);
+        (this.wallSlots || []).forEach(considerFund);
+        if (fundSlot && this.coins > 0) {
+          const kind = fundSlot.kind || 'tower';
+          const cost = kind === 'wall' ? WALL_COST : TOWER_COST;
+          if (fundSlot.progress < cost) {
+            const deposit = Math.min(this.coins, cost - fundSlot.progress);
+            this.coins -= deposit;
+            fundSlot.progress += deposit;
+            this.coins = Math.max(0, Math.round(this.coins));
+            if (fundSlot.progress >= cost) {
+              if (kind === 'wall') this.spawnWall(fundSlot.cx, fundSlot.cy, fundSlot.pathId);
+              else this.spawnTower(fundSlot.cx, fundSlot.cy);
+              fundSlot.progress = cost;
+            }
+          }
+        }
+        const refreshBuildSlot = (slot) => {
+          const kind = slot.kind || 'tower';
+          const cost = kind === 'wall' ? WALL_COST : TOWER_COST;
+          const built = kind === 'wall' ? this.hasWallAt(slot.cx, slot.cy) : this.hasTowerAt(slot.cx, slot.cy);
+          if (built) {
             slot.zone.setVisible(false);
             slot.costText.setVisible(false);
             if (slot.progressBar) slot.progressBar.setVisible(false);
             return;
           }
-          const inZone = Math.abs(this.hero.x - slot.cx) <= TOWER_SLOT_SIZE/2 && Math.abs(this.hero.y - slot.cy) <= TOWER_SLOT_SIZE/2;
-          if (inZone && this.coins > 0 && slot.progress < TOWER_COST) {
-            const deposit = Math.min(this.coins, TOWER_COST - slot.progress);
-            this.coins -= deposit;
-            slot.progress += deposit;
-            if (slot.progress >= TOWER_COST) {
-              this.spawnTower(slot.cx, slot.cy);
-              slot.progress = TOWER_COST;
-            }
-          }
-          slot.costText.setText(slot.progress + '/' + TOWER_COST);
+          slot.zone.setVisible(true);
+          slot.costText.setVisible(true);
+          slot.costText.setText(slot.progress + '/' + cost);
           if (slot.progressBar) {
-            slot.progressBar.scaleX = slot.progress / TOWER_COST;
+            slot.progressBar.scaleX = slot.progress > 0 ? Math.max(0.02, slot.progress / cost) : 0.02;
             slot.progressBar.setVisible(slot.progress > 0);
           }
-        });
+        };
+        (this.towerSlots || []).forEach(refreshBuildSlot);
+        (this.wallSlots || []).forEach(refreshBuildSlot);
 
+        const lev = this.wave || 1;
+        const shootHero = lev >= 4;
+        const gunCd = lev > 6 ? Math.max(420, ENEMY_SHOOT_COOLDOWN_MS - (lev - 6) * 38) : ENEMY_SHOOT_COOLDOWN_MS;
         this.enemyData.forEach(ed => {
-          const dToBase = dist(ed.obj.x, ed.obj.y, BASE_X, BASE_Y);
-          if (dToBase <= ENEMY_BASE_SHOOT_RANGE) {
-            if (!ed.lastShotAtBase) ed.lastShotAtBase = 0;
-            if (time - ed.lastShotAtBase >= ENEMY_SHOOT_COOLDOWN_MS) {
-              ed.lastShotAtBase = time;
-              if (!this.enemyArrowData) this.enemyArrowData = [];
-              const vx = (BASE_X - ed.obj.x) / (dToBase || 1) * 280;
-              const vy = (BASE_Y - ed.obj.y) / (dToBase || 1) * 280;
-              const proj = this.add.line(ed.obj.x, ed.obj.y, 0, 0, vx * 0.08, vy * 0.08, 0xff4444).setDepth(100);
-              if (!this.enemyArrows) this.enemyArrows = this.add.group();
-              this.enemyArrows.add(proj);
-              this.enemyArrowData.push({
-                x: ed.obj.x, y: ed.obj.y, vx: vx, vy: vy, damage: BASE_DAMAGE_PER_ARROW, obj: proj
-              });
+          if (!ed.lastShotAtBase) ed.lastShotAtBase = 0;
+          const blockWall = this.getBlockingWall(ed);
+          if (blockWall) {
+            blockWall.hp -= WALL_CONTACT_DPS * dt;
+            if (blockWall.hp <= 0) {
+              if (blockWall.sprite && blockWall.sprite.destroy) blockWall.sprite.destroy();
+              const wi = this.wallData.indexOf(blockWall);
+              if (wi >= 0) this.wallData.splice(wi, 1);
+              this.releaseWallBuildSlot(blockWall.x, blockWall.y);
+            } else if (blockWall.sprite && blockWall.maxHp) {
+              blockWall.sprite.setAlpha(0.35 + 0.65 * (blockWall.hp / blockWall.maxHp));
             }
+          }
+
+          const candidates = [];
+          const dToBase = dist(ed.obj.x, ed.obj.y, this.baseX, this.baseY);
+          if (dToBase <= ENEMY_BASE_SHOOT_RANGE) candidates.push({ type: 'base', d: dToBase, tx: this.baseX, ty: this.baseY, color: 0xff4444, dmg: BASE_DAMAGE_PER_ARROW, ref: null });
+          if (shootHero) {
+            const dToHero = dist(ed.obj.x, ed.obj.y, this.hero.x, this.hero.y);
+            if (dToHero <= ENEMY_HERO_SHOOT_RANGE) candidates.push({ type: 'hero', d: dToHero, tx: this.hero.x, ty: this.hero.y, color: 0xea80fc, dmg: ENEMY_DAMAGE_HERO, ref: null });
+          }
+          if (this.towerData && this.towerData.length) {
+            this.towerData.forEach(tw => {
+              if (tw.hp != null && tw.hp <= 0) return;
+              const d = dist(ed.obj.x, ed.obj.y, tw.x, tw.y);
+              if (d <= ENEMY_TOWER_SHOOT_RANGE) candidates.push({ type: 'tower', d, tx: tw.x, ty: tw.y, color: 0xff9800, dmg: ENEMY_DAMAGE_TOWER, ref: tw });
+            });
+          }
+          if (this.wallData && this.wallData.length) {
+            this.wallData.forEach(ww => {
+              if (ww.hp != null && ww.hp <= 0) return;
+              const d = dist(ed.obj.x, ed.obj.y, ww.x, ww.y);
+              if (d <= ENEMY_WALL_SHOOT_RANGE) candidates.push({ type: 'wall', d, tx: ww.x, ty: ww.y, color: 0x795548, dmg: ENEMY_DAMAGE_WALL, ref: ww });
+            });
+          }
+          candidates.sort((a, b) => a.d - b.d);
+          const best = candidates.length ? candidates[0] : null;
+
+          if (best && time - ed.lastShotAtBase >= gunCd) {
+            ed.lastShotAtBase = time;
+            const dShot = best.d || dist(ed.obj.x, ed.obj.y, best.tx, best.ty) || 1;
+            const vx = ((best.tx - ed.obj.x) / dShot) * 300;
+            const vy = ((best.ty - ed.obj.y) / dShot) * 300;
+            if (!this.enemyArrowData) this.enemyArrowData = [];
+            const proj = this.add.line(ed.obj.x, ed.obj.y, 0, 0, vx * 0.08, vy * 0.08, best.color).setDepth(100);
+            if (!this.enemyArrows) this.enemyArrows = this.add.group();
+            this.enemyArrows.add(proj);
+            this.enemyArrowData.push({
+              x: ed.obj.x, y: ed.obj.y, vx, vy, damage: best.dmg, obj: proj,
+              target: best.type, towerRef: best.type === 'tower' ? best.ref : null, wallRef: best.type === 'wall' ? best.ref : null
+            });
+          }
+
+          if (blockWall) return;
+
+          const path = this.paths && ed.pathId != null && this.paths[ed.pathId] ? this.paths[ed.pathId] : (this.paths && this.paths[0]) ? this.paths[0] : null;
+          const wp = path ? path.waypoints : null;
+          if (wp && ed.pathIndex != null && ed.pathIndex < wp.length) {
+            const target = wp[ed.pathIndex];
+            const dx = target.x - ed.obj.x, dy = target.y - ed.obj.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const move = Math.min(ed.speed * dt, len);
+            ed.obj.x += (dx / len) * move;
+            ed.obj.y += (dy / len) * move;
+            if (dist(ed.obj.x, ed.obj.y, target.x, target.y) < 12) ed.pathIndex++;
           } else {
-            const path = this.paths && ed.pathId != null && this.paths[ed.pathId] ? this.paths[ed.pathId] : (this.paths && this.paths[0]) ? this.paths[0] : null;
-            const wp = path ? path.waypoints : null;
-            if (wp && ed.pathIndex != null && ed.pathIndex < wp.length) {
-              const target = wp[ed.pathIndex];
-              const dx = target.x - ed.obj.x, dy = target.y - ed.obj.y;
-              const len = Math.hypot(dx, dy) || 1;
-              const move = Math.min(ed.speed * dt, len);
-              ed.obj.x += (dx / len) * move;
-              ed.obj.y += (dy / len) * move;
-              if (dist(ed.obj.x, ed.obj.y, target.x, target.y) < 12) ed.pathIndex++;
-            } else {
-              const dx = BASE_X - ed.obj.x, dy = BASE_Y - ed.obj.y;
-              const len = Math.hypot(dx, dy) || 1;
-              ed.obj.x += (dx / len) * ed.speed * dt;
-              ed.obj.y += (dy / len) * ed.speed * dt;
-            }
+            const dx = this.baseX - ed.obj.x, dy = this.baseY - ed.obj.y;
+            const len = Math.hypot(dx, dy) || 1;
+            ed.obj.x += (dx / len) * ed.speed * dt;
+            ed.obj.y += (dy / len) * ed.speed * dt;
           }
         });
         this.enemyData.filter(ed => ed.hp <= 0).forEach(ed => ed.obj.destroy());
@@ -652,6 +937,7 @@
           this.arrows.getChildren()[this.arrows.getChildren().length - 1].destroy();
 
         this.towerData.forEach((t, ti) => {
+          if (!t.hp || t.hp <= 0) return;
           let near = null, nearD = TOWER_RANGE + 1;
           this.enemyData.forEach(ed => {
             const d = dist(t.x, t.y, ed.obj.x, ed.obj.y);
@@ -687,29 +973,65 @@
 
         if (this.enemyArrowData && this.enemyArrowData.length) {
           this.enemyArrowData.forEach(ea => {
+            const tgt0 = ea.target || 'base';
+            if (tgt0 === 'tower' && ea.towerRef && (ea.towerRef.hp == null || ea.towerRef.hp <= 0)) {
+              if (ea.obj && ea.obj.destroy) ea.obj.destroy();
+              ea.hit = true;
+              return;
+            }
+            if (tgt0 === 'wall' && ea.wallRef && (ea.wallRef.hp == null || ea.wallRef.hp <= 0)) {
+              if (ea.obj && ea.obj.destroy) ea.obj.destroy();
+              ea.hit = true;
+              return;
+            }
             ea.x += ea.vx * dt;
             ea.y += ea.vy * dt;
             if (ea.obj && ea.obj.active) {
               ea.obj.x = ea.x;
               ea.obj.y = ea.y;
             }
-            if (dist(ea.x, ea.y, BASE_X, BASE_Y) < 45) {
+            const tgt = ea.target || 'base';
+            if (tgt === 'base' && dist(ea.x, ea.y, this.baseX, this.baseY) < 45) {
               this.baseHp -= ea.damage;
               if (ea.obj && ea.obj.destroy) ea.obj.destroy();
               ea.hit = true;
+            } else if (tgt === 'hero' && dist(ea.x, ea.y, this.hero.x, this.hero.y) < 28) {
+              this.heroHp -= ea.damage;
+              if (ea.obj && ea.obj.destroy) ea.obj.destroy();
+              ea.hit = true;
+            } else if (tgt === 'tower' && ea.towerRef && ea.towerRef.hp != null) {
+              if (dist(ea.x, ea.y, ea.towerRef.x, ea.towerRef.y) < 30) {
+                ea.towerRef.hp -= ea.damage;
+                if (ea.towerRef.hp <= 0) {
+                  if (ea.towerRef.sprite && ea.towerRef.sprite.destroy) ea.towerRef.sprite.destroy();
+                  const ix = this.towerData.indexOf(ea.towerRef);
+                  if (ix >= 0) this.towerData.splice(ix, 1);
+                  this.releaseTowerBuildSlot(ea.towerRef.x, ea.towerRef.y);
+                } else if (ea.towerRef.sprite && ea.towerRef.maxHp) {
+                  this.applyTowerHpVisual(ea.towerRef);
+                }
+                if (ea.obj && ea.obj.destroy) ea.obj.destroy();
+                ea.hit = true;
+              }
+            } else if (tgt === 'wall' && ea.wallRef && ea.wallRef.hp != null) {
+              if (dist(ea.x, ea.y, ea.wallRef.x, ea.wallRef.y) < 38) {
+                ea.wallRef.hp -= ea.damage;
+                if (ea.wallRef.hp <= 0) {
+                  if (ea.wallRef.sprite && ea.wallRef.sprite.destroy) ea.wallRef.sprite.destroy();
+                  const ix = this.wallData.indexOf(ea.wallRef);
+                  if (ix >= 0) this.wallData.splice(ix, 1);
+                  this.releaseWallBuildSlot(ea.wallRef.x, ea.wallRef.y);
+                } else if (ea.wallRef.sprite && ea.wallRef.maxHp) {
+                  ea.wallRef.sprite.setAlpha(0.35 + 0.65 * (ea.wallRef.hp / ea.wallRef.maxHp));
+                }
+                if (ea.obj && ea.obj.destroy) ea.obj.destroy();
+                ea.hit = true;
+              }
             }
           });
           this.enemyArrowData = this.enemyArrowData.filter(ea => !ea.hit);
         }
 
-        this.coinData = this.coinData.filter(c => {
-          if (dist(this.hero.x, this.hero.y, c.x, c.y) <= COIN_PICKUP_RANGE) {
-            this.coins += (c.amount != null ? c.amount : COINS_PER_KILL);
-            this.coinParticles.emitParticleAt(c.x, c.y);
-            return false;
-          }
-          return true;
-        });
         while (this.coinsGroup.getChildren().length > this.coinData.length)
           this.coinsGroup.getChildren()[this.coinsGroup.getChildren().length - 1].destroy();
         while (this.coinsGroup.getChildren().length < this.coinData.length) {
@@ -722,13 +1044,17 @@
           if (coin) { coin.x = c.x; coin.y = c.y; }
         });
 
-        if (this.baseHp <= 0) {
+        if (this.baseHp <= 0 || this.heroHp <= 0) {
           this.gameOver = true;
           document.getElementById('gameOver').classList.add('show');
+          const goP = document.querySelector('#gameOver p');
+          if (goP) goP.textContent = this.heroHp <= 0 ? 'You were defeated in battle.' : 'Enemies overwhelmed your base.';
         }
 
         document.getElementById('coinDisplay').textContent = this.coins;
         document.getElementById('baseHpDisplay').textContent = Math.max(0, Math.ceil(this.baseHp));
+        const hpEl = document.getElementById('heroHpDisplay');
+        if (hpEl) hpEl.textContent = Math.max(0, Math.ceil(this.heroHp));
         document.getElementById('waveDisplay').textContent = this.wave;
         this.baseSprite.setFillStyle(this.baseHp / BASE_HP_MAX > 0.5 ? 0x4e8b42 : this.baseHp / BASE_HP_MAX > 0.25 ? 0xc9a227 : 0xc0392b);
 
