@@ -45,6 +45,13 @@
       <p class="intro-row"><span class="intro-icon">🖥️</span> <span><strong>Desktop:</strong> Arrow keys to move</span></p>
       <p class="intro-row"><span class="intro-icon">📱</span> <span><strong>Mobile:</strong> Tap where the horse should go</span></p>
       <p class="intro-row"><span class="intro-icon">🪙</span> <span>Kill enemies → earn coins. Walk over build zones to spend coins on <strong>defense towers</strong>.</span></p>
+      <p class="intro-row"><span class="intro-icon">⌨️</span> <span>Press <strong>Enter</strong> or <strong>Space</strong> to begin.</span></p>
+      <p class="intro-row"><span class="intro-icon">🎯</span> <span>Start at level:
+        <input id="introStartLevel" type="number" min="1" max="10" value="1" style="width:60px; margin-left:6px; padding:2px 4px; border-radius:4px; border:1px solid #6b8f73; background:#f0f4ef; color:#1d3024; font:600 13px Outfit;">
+      </span></p>
+      <p class="intro-row"><span class="intro-icon">🪙</span> <span>Starting coins:
+        <input id="introStartCoins" type="number" min="0" step="10" value="0" style="width:80px; margin-left:6px; padding:2px 4px; border-radius:4px; border:1px solid #6b8f73; background:#f0f4ef; color:#1d3024; font:600 13px Outfit;">
+      </span></p>
       <div class="intro-cta"><button type="button" id="introPlayBtn">Play</button></div>
     </div>
   </div>
@@ -56,7 +63,7 @@
     <span class="wave">Level: <strong id="waveDisplay">1</strong></span>
   </div>
   <div id="game-container"></div>
-  <div class="instructions">Arrow keys – move · Auto-shoot · Towers <strong>50</strong> (grey circle, green→red ring = HP) · Walls <strong>100</strong> (level 6+, brown on path) block lanes · Walk zones again to <strong>rebuild</strong> after either is destroyed · Map changes each level</div>
+  <div class="instructions">Arrow keys – move · Auto-shoot · Towers <strong>50</strong> (grey circle, green→red ring = HP) · Walk tower zones again to <strong>rebuild</strong> after destruction · Map changes each level</div>
   <div class="controls">P – Pause &nbsp; R – Reset</div>
   <div id="towerPrompt"></div>
   <div class="overlay" id="pauseOverlay" style="display: none;">
@@ -66,12 +73,16 @@
   <div class="overlay" id="levelPassedOverlay" style="display: none;">
     <h2 style="color: #81c784;">Level passed!</h2>
     <p style="color: #fff;">Press <strong>Enter</strong> or <strong>Space</strong> when you’re ready for the next level.</p>
-    <p style="color: #a5d6a7; font-size: 0.95rem; margin-top: 12px; max-width: 340px; text-align: center; line-height: 1.4;">Collect any coins still on the field—they carry over and help you build towers for the next wave.</p>
+    <p style="color: #a5d6a7; font-size: 0.95rem; margin-top: 12px; max-width: 340px; text-align: center; line-height: 1.4;">Coins on the field are collected automatically. You can move, but you can’t build until you continue.</p>
   </div>
   <div class="overlay" id="gameOver">
     <h2>Base Destroyed</h2>
     <p>Enemies overwhelmed your base.</p>
-    <button id="restartBtn">Play Again</button>
+    <p style="color: #ccc; font-size: 0.95rem; margin-top: 8px;">Press <strong>Space</strong> or use the button to play again.</p>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+      <button id="retryLevelBtn">Retry Level</button>
+      <button id="restartBtn">Restart from Level 1</button>
+    </div>
   </div>
   <div class="overlay" id="gameWin" style="display: none;">
     <h2>Victory</h2>
@@ -109,12 +120,9 @@
     const COIN_PICKUP_RANGE = 36;
     const COINS_PER_KILL = 5;
     const TOWER_COST = 50;
-    const WALL_COST = TOWER_COST * 2;
-    const WALL_HP_MAX = 160;
-    const WALL_BLOCK_RANGE = 54;
-    const ENEMY_WALL_SHOOT_RANGE = 185;
-    const ENEMY_DAMAGE_WALL = 13;
-    const WALL_CONTACT_DPS = 28;
+    const REGEN_DELAY_MS = 3200;
+    const HERO_REGEN_PER_SEC = 42;
+    const BASE_REGEN_PER_SEC = 14;
     const TOWER_RANGE = 160;
     const TOWER_COOLDOWN_MS = 600;
     const WAVE_SPAWN_INTERVAL_MS = 350;
@@ -269,18 +277,21 @@
         dctx.fillRect(2, 2, tileSize - 4, tileSize - 4);
         this.textures.addCanvas('dirt', dirtCanvas);
 
-        this.wave = 1;
-        this.mapSequence = [];
-        this.mapFlipHSeq = [];
-        this.mapFlipVSeq = [];
-        for (let i = 0; i < MAX_LEVEL; i++) {
-          this.mapSequence.push(Math.floor(Math.random() * MAP_CONFIGS.length));
-          this.mapFlipHSeq.push(Math.random() < 0.5);
-          this.mapFlipVSeq.push(Math.random() < 0.35);
+        this.wave = data.startWave ? Math.max(1, Math.min(MAX_LEVEL, data.startWave)) : 1;
+        this.mapSequence = Array.isArray(data.mapSequence) ? data.mapSequence.slice() : [];
+        this.mapFlipHSeq = Array.isArray(data.mapFlipHSeq) ? data.mapFlipHSeq.slice() : [];
+        this.mapFlipVSeq = Array.isArray(data.mapFlipVSeq) ? data.mapFlipVSeq.slice() : [];
+        if (this.mapSequence.length < MAX_LEVEL || this.mapFlipHSeq.length < MAX_LEVEL || this.mapFlipVSeq.length < MAX_LEVEL) {
+          this.mapSequence = [];
+          this.mapFlipHSeq = [];
+          this.mapFlipVSeq = [];
+          for (let i = 0; i < MAX_LEVEL; i++) {
+            this.mapSequence.push(Math.floor(Math.random() * MAP_CONFIGS.length));
+            this.mapFlipHSeq.push(Math.random() < 0.5);
+            this.mapFlipVSeq.push(Math.random() < 0.35);
+          }
         }
-        this.mapIndex = this.mapSequence[0];
-        this.walls = this.add.group();
-        this.wallData = [];
+        this.mapIndex = this.mapSequence[this.wave - 1];
         this.buildTerrainAndSlots();
         this.terrainLayer.setDepth(0);
 
@@ -335,6 +346,54 @@
           document.getElementById('levelPassedOverlay').classList.remove('show');
         });
         this.input.keyboard.on('keydown', (e) => {
+          const pressedEnterOrSpace =
+            e.key === 'Enter' || e.keyCode === 13 || e.key === ' ' || e.code === 'Space';
+          if (this.introWaiting && pressedEnterOrSpace) {
+            if (e.key === ' ' || e.code === 'Space') e.preventDefault();
+            const introLevelInput = document.getElementById('introStartLevel');
+            const introCoinsInput = document.getElementById('introStartCoins');
+            let startLevel = introLevelInput ? parseInt(introLevelInput.value, 10) : 1;
+            let startCoins = introCoinsInput ? parseInt(introCoinsInput.value, 10) : this.coins;
+            if (!Number.isFinite(startLevel)) startLevel = 1;
+            if (!Number.isFinite(startCoins)) startCoins = this.coins;
+            startLevel = Math.max(1, Math.min(MAX_LEVEL, startLevel));
+            startCoins = Math.max(0, startCoins);
+            const introOverlay = document.getElementById('introOverlay');
+            if (startLevel !== this.wave) {
+              this.scene.restart({
+                startWave: startLevel,
+                mapSequence: this.mapSequence,
+                mapFlipHSeq: this.mapFlipHSeq,
+                mapFlipVSeq: this.mapFlipVSeq,
+                coins: startCoins,
+                useCustomArt: this.useCustomArt
+              });
+              if (introOverlay) { introOverlay.classList.remove('show'); introOverlay.style.display = 'none'; }
+            } else {
+              if (introOverlay) { introOverlay.classList.remove('show'); introOverlay.style.display = 'none'; }
+              this.coins = Math.max(0, Math.round(startCoins));
+              this.introWaiting = false;
+              this.levelStartCoins = this.coins;
+              this.startWave();
+            }
+            return;
+          }
+          if (this.gameOver && (e.key === ' ' || e.code === 'Space')) {
+            e.preventDefault();
+            this.scene.restart({
+              startWave: this.wave,
+              mapSequence: this.mapSequence,
+              mapFlipHSeq: this.mapFlipHSeq,
+              mapFlipVSeq: this.mapFlipVSeq,
+              coins: this.levelStartCoins != null ? this.levelStartCoins : this.coins,
+              useCustomArt: this.useCustomArt
+            });
+            document.getElementById('gameOver').classList.remove('show');
+            document.getElementById('gameWin').classList.remove('show');
+            document.getElementById('levelPassedOverlay').classList.remove('show');
+            document.getElementById('pauseOverlay').classList.remove('show');
+            return;
+          }
           const advanceLevel =
             e.key === 'Enter' || e.keyCode === 13 || e.key === ' ' || e.code === 'Space';
           if (advanceLevel && this.levelPassedWaitingEnter) {
@@ -355,11 +414,6 @@
               this.towers.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
               this.towers.clear(true, true);
             }
-            this.wallData = [];
-            if (this.walls && this.walls.getChildren) {
-              this.walls.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
-              this.walls.clear(true, true);
-            }
             this.towerProjData = [];
             if (this.towerProjectiles && this.towerProjectiles.getChildren) {
               this.towerProjectiles.getChildren().slice().forEach(p => { try { if (p && p.destroy) p.destroy(); } catch (e) {} });
@@ -373,24 +427,23 @@
               });
               this.towerSlots = [];
             }
-            if (this.wallSlots && this.wallSlots.length) {
-              this.wallSlots.forEach(s => {
-                if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
-                if (s.zone && s.zone.destroy) s.zone.destroy();
-                if (s.costText && s.costText.destroy) s.costText.destroy();
-              });
-              this.wallSlots = [];
-            }
             this.wave++;
             this.mapIndex = this.mapSequence[this.wave - 1];
+            this.baseHp = BASE_HP_MAX;
+            this.heroHp = HERO_HP_MAX;
+            this.lastHeroDamagedAt = -1e9;
+            this.lastBaseDamagedAt = -1e9;
             this.buildTerrainAndSlots();
+            this.levelStartCoins = this.coins;
             this.startWave();
           }
         });
 
-        this.coins = 0;
+        this.coins = data.coins != null ? data.coins : 0;
         this.baseHp = BASE_HP_MAX;
         this.heroHp = HERO_HP_MAX;
+        this.lastHeroDamagedAt = -1e9;
+        this.lastBaseDamagedAt = -1e9;
         this.gameOver = false;
         this.paused = false;
         this.levelPassedWaitingEnter = false;
@@ -405,19 +458,48 @@
         this.enemyArrowData = [];
         this.enemyArrows = this.add.group();
         this.coinData = [];
+        this.levelStartCoins = this.coins;
         const introOverlay = document.getElementById('introOverlay');
         const introVisible = introOverlay && introOverlay.classList.contains('show');
         this.introWaiting = !!introVisible;
         const introBtn = document.getElementById('introPlayBtn');
+        const introLevelInput = document.getElementById('introStartLevel');
+        const introCoinsInput = document.getElementById('introStartCoins');
+        if (introLevelInput) introLevelInput.value = String(this.wave || 1);
+        if (introCoinsInput) introCoinsInput.value = String(Math.max(0, Math.round(this.coins || 0)));
         if (introBtn && introOverlay) {
           introBtn.onclick = () => {
+            let startLevel = introLevelInput ? parseInt(introLevelInput.value, 10) : 1;
+            let startCoins = introCoinsInput ? parseInt(introCoinsInput.value, 10) : this.coins;
+            if (!Number.isFinite(startLevel)) startLevel = 1;
+            if (!Number.isFinite(startCoins)) startCoins = this.coins;
+            startLevel = Math.max(1, Math.min(MAX_LEVEL, startLevel));
+            startCoins = Math.max(0, startCoins);
+            if (startLevel !== this.wave) {
+              this.scene.restart({
+                startWave: startLevel,
+                mapSequence: this.mapSequence,
+                mapFlipHSeq: this.mapFlipHSeq,
+                mapFlipVSeq: this.mapFlipVSeq,
+                coins: startCoins,
+                useCustomArt: this.useCustomArt
+              });
+              introOverlay.classList.remove('show');
+              introOverlay.style.display = 'none';
+              return;
+            }
             introOverlay.classList.remove('show');
             introOverlay.style.display = 'none';
+            this.coins = Math.max(0, Math.round(startCoins));
             this.introWaiting = false;
+            this.levelStartCoins = this.coins;
             this.startWave();
           };
         }
-        if (!this.introWaiting) this.startWave();
+        if (!this.introWaiting) {
+          this.levelStartCoins = this.coins;
+          this.startWave();
+        }
         const goP = document.querySelector('#gameOver p');
         if (goP) goP.textContent = 'Enemies overwhelmed your base.';
       },
@@ -463,12 +545,22 @@
             if (fr + 1 < mapH) mapData[fr + 1][fc] = 1;
           });
         });
-        this.paths = pathArrays.map(pathCells => ({
-          waypoints: pathCells.map(([c, r]) => {
+        this.paths = pathArrays.map(pathCells => {
+          const waypoints = pathCells.map(([c, r]) => {
             const [fc, fr] = flipCell(c, r);
             return { x: fc * tileSize + tileSize / 2, y: fr * tileSize + tileSize / 2 };
-          })
-        }));
+          });
+          const cumLen = [];
+          let s = 0;
+          for (let i = 0; i < waypoints.length; i++) {
+            if (i === 0) cumLen.push(0);
+            else {
+              s += dist(waypoints[i - 1].x, waypoints[i - 1].y, waypoints[i].x, waypoints[i].y);
+              cumLen.push(s);
+            }
+          }
+          return { waypoints, cumLen, totalLen: s };
+        });
         this.terrainLayer = this.add.container(0, 0).setDepth(0);
         for (let row = 0; row < mapH; row++) {
           for (let col = 0; col < mapW; col++) {
@@ -485,14 +577,6 @@
           });
         }
         this.towerSlots = [];
-        if (this.wallSlots && this.wallSlots.length) {
-          this.wallSlots.forEach(s => {
-            if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
-            if (s.zone && s.zone.destroy) s.zone.destroy();
-            if (s.costText && s.costText.destroy) s.costText.destroy();
-          });
-        }
-        this.wallSlots = [];
         const off = TOWER_SLOT_OFFSET_FROM_PATH;
         const placed = [];
         this.paths.forEach((path, pathId) => {
@@ -524,31 +608,6 @@
             this.towerSlots.push({ kind: 'tower', zone, costText, progressBar, cx, cy, progress: 0, pathId });
           });
         });
-        const waveLv = this.wave || 1;
-        if (waveLv >= 6) {
-          const wallSlotSize = TOWER_SLOT_SIZE + 12;
-          this.paths.forEach((path, pathId) => {
-            const wp = path.waypoints;
-            if (wp.length < 3) return;
-            const segIdx = Math.max(1, Math.min(wp.length - 2, Math.floor(wp.length * 0.52)));
-            const w1 = wp[segIdx];
-            const w2 = wp[segIdx + 1];
-            const wx = (w1.x + w2.x) * 0.5;
-            const wy = (w1.y + w2.y) * 0.5;
-            const nearTowerPad = (this.towerSlots || []).some(
-              ts => ts.pathId === pathId && dist(ts.cx, ts.cy, wx, wy) < 78
-            );
-            if (nearTowerPad) return;
-            if (placed.some(p => dist(p.cx, p.cy, wx, wy) < MIN_SLOT_DISTANCE * 1.25)) return;
-            placed.push({ cx: wx, cy: wy });
-            const barW = wallSlotSize - 6;
-            const barH = 10;
-            const progressBar = this.add.rectangle(wx - barW / 2, wy + 8, barW, barH, 0x8d6e63, 0.55).setOrigin(0, 0.5).setDepth(49);
-            const zone = this.add.rectangle(wx, wy, wallSlotSize, wallSlotSize * 0.75, 0, 0).setStrokeStyle(2, 0x8d6e63, 0.85).setOrigin(0.5).setDepth(50);
-            const costText = this.add.text(wx, wy - 6, '0/' + WALL_COST, { font: 'bold 11px Outfit', color: '#3e2723' }).setOrigin(0.5).setDepth(50);
-            this.wallSlots.push({ kind: 'wall', zone, costText, progressBar, cx: wx, cy: wy, progress: 0, pathId });
-          });
-        }
         if (this.baseSprite && this.baseSprite.setPosition) {
           this.baseSprite.setPosition(this.baseX, this.baseY);
           if (this.baseLabel && this.baseLabel.setPosition) this.baseLabel.setPosition(this.baseX, this.baseY + 4);
@@ -569,20 +628,11 @@
           if ((s.kind || 'tower') !== 'tower') return;
           if (!this.hasTowerAt(s.cx, s.cy) && s.progress >= TOWER_COST) s.progress = 0;
         });
-        (this.wallSlots || []).forEach(s => {
-          if (!this.hasWallAt(s.cx, s.cy) && s.progress >= WALL_COST) s.progress = 0;
-        });
       },
 
       releaseTowerBuildSlot: function(worldX, worldY) {
         (this.towerSlots || []).forEach(s => {
           if ((s.kind || 'tower') === 'tower' && dist(s.cx, s.cy, worldX, worldY) < 38) s.progress = 0;
-        });
-      },
-
-      releaseWallBuildSlot: function(worldX, worldY) {
-        (this.wallSlots || []).forEach(s => {
-          if (dist(s.cx, s.cy, worldX, worldY) < 56) s.progress = 0;
         });
       },
 
@@ -594,22 +644,6 @@
         tw.sprite.setStrokeStyle(Math.min(4, 2 + Math.ceil((1 - r) * 2)), stroke);
       },
 
-      hasWallAt: function(cx, cy) {
-        return (this.wallData || []).some(w => w.hp > 0 && dist(w.x, w.y, cx, cy) < 14);
-      },
-
-      getBlockingWall: function(ed) {
-        if (!this.wallData || !this.wallData.length) return null;
-        const wd = this.wallData.find(w => w.pathId === ed.pathId && w.hp > 0);
-        if (!wd) return null;
-        const dEnemyBase = dist(ed.obj.x, ed.obj.y, this.baseX, this.baseY);
-        const dWallBase = dist(wd.x, wd.y, this.baseX, this.baseY);
-        if (dEnemyBase <= dWallBase + 18) return null;
-        const dEw = dist(ed.obj.x, ed.obj.y, wd.x, wd.y);
-        if (dEw < WALL_BLOCK_RANGE) return wd;
-        return null;
-      },
-
       spawnTower: function(x, y) {
         const tower = this.add.circle(x, y, 20, 0x78909c).setStrokeStyle(2, 0x43a047).setDepth(102);
         this.towers.add(tower);
@@ -618,12 +652,6 @@
         this.applyTowerHpVisual(td);
       },
 
-      spawnWall: function(x, y, pathId) {
-        const wall = this.add.rectangle(x, y, 80, 24, 0x5d4037).setStrokeStyle(3, 0x3e2723).setDepth(88);
-        wall.setAlpha(1);
-        this.walls.add(wall);
-        this.wallData.push({ x, y, pathId, hp: WALL_HP_MAX, maxHp: WALL_HP_MAX, sprite: wall });
-      },
 
       startWave: function() {
         this.waveInProgress = true;
@@ -688,7 +716,7 @@
       spawnEnemy: function() {
         const type = this.pickEnemyTypeForLevel(this.wave);
         if (!this.paths || this.paths.length === 0) return;
-        const pathId = Math.floor(Math.random() * this.paths.length);
+        let pathId = Math.floor(Math.random() * this.paths.length);
         const path = this.paths[pathId];
         const wp = path.waypoints;
         if (!wp || wp.length === 0) return;
@@ -746,6 +774,13 @@
         }
         this.hero.rotation = this.hero.facingAngle;
 
+        if (time - this.lastHeroDamagedAt >= REGEN_DELAY_MS && this.heroHp < HERO_HP_MAX) {
+          this.heroHp = Math.min(HERO_HP_MAX, this.heroHp + HERO_REGEN_PER_SEC * dt);
+        }
+        if (time - this.lastBaseDamagedAt >= REGEN_DELAY_MS && this.baseHp < BASE_HP_MAX) {
+          this.baseHp = Math.min(BASE_HP_MAX, this.baseHp + BASE_REGEN_PER_SEC * dt);
+        }
+
         if (this.waveInProgress) {
           this.waveSpawnTimer += clampedMs;
           if (this.waveEnemiesToSpawn > 0 && this.waveSpawnTimer >= (this.waveSpawnInterval != null ? this.waveSpawnInterval : WAVE_SPAWN_INTERVAL_MS)) {
@@ -756,6 +791,7 @@
         } else if (!this.introWaiting && !this.levelPassedWaitingEnter && this.enemyData.length === 0) this.startWave();
 
         this.coinData = this.coinData.filter(c => {
+          if (this.levelPassedWaitingEnter) return true;
           if (dist(this.hero.x, this.hero.y, c.x, c.y) <= COIN_PICKUP_RANGE) {
             this.coins += (c.amount != null ? c.amount : COINS_PER_KILL);
             this.coinParticles.emitParticleAt(c.x, c.y);
@@ -763,45 +799,48 @@
           }
           return true;
         });
+        if (this.levelPassedWaitingEnter && this.coinData.length) {
+          this.coinData.forEach(c => {
+            this.coins += (c.amount != null ? c.amount : COINS_PER_KILL);
+            this.coinParticles.emitParticleAt(c.x, c.y);
+          });
+          this.coinData = [];
+        }
         this.coins = Math.max(0, Math.round(this.coins));
         this.syncOrphanedBuildSlots();
 
         let fundSlot = null;
         let fundDist = Infinity;
         const considerFund = (slot) => {
-          const kind = slot.kind || 'tower';
-          const cost = kind === 'wall' ? WALL_COST : TOWER_COST;
-          if (kind === 'tower' && this.hasTowerAt(slot.cx, slot.cy)) return;
-          if (kind === 'wall' && this.hasWallAt(slot.cx, slot.cy)) return;
-          const hw = kind === 'wall' ? (TOWER_SLOT_SIZE + 12) / 2 : TOWER_SLOT_SIZE / 2;
-          const hh = kind === 'wall' ? (TOWER_SLOT_SIZE + 12) * 0.375 : TOWER_SLOT_SIZE / 2;
+          const cost = TOWER_COST;
+          if (this.hasTowerAt(slot.cx, slot.cy)) return;
+          const hw = TOWER_SLOT_SIZE / 2;
+          const hh = TOWER_SLOT_SIZE / 2;
           const inZone = Math.abs(this.hero.x - slot.cx) <= hw && Math.abs(this.hero.y - slot.cy) <= hh;
           if (inZone && slot.progress < cost) {
             const d = dist(this.hero.x, this.hero.y, slot.cx, slot.cy);
             if (d < fundDist) { fundDist = d; fundSlot = slot; }
           }
         };
-        (this.towerSlots || []).forEach(considerFund);
-        (this.wallSlots || []).forEach(considerFund);
-        if (fundSlot && this.coins > 0) {
-          const kind = fundSlot.kind || 'tower';
-          const cost = kind === 'wall' ? WALL_COST : TOWER_COST;
-          if (fundSlot.progress < cost) {
-            const deposit = Math.min(this.coins, cost - fundSlot.progress);
-            this.coins -= deposit;
-            fundSlot.progress += deposit;
-            this.coins = Math.max(0, Math.round(this.coins));
-            if (fundSlot.progress >= cost) {
-              if (kind === 'wall') this.spawnWall(fundSlot.cx, fundSlot.cy, fundSlot.pathId);
-              else this.spawnTower(fundSlot.cx, fundSlot.cy);
-              fundSlot.progress = cost;
+        if (!this.levelPassedWaitingEnter) {
+          (this.towerSlots || []).forEach(considerFund);
+          if (fundSlot && this.coins > 0) {
+            const cost = TOWER_COST;
+            if (fundSlot.progress < cost) {
+              const deposit = Math.min(this.coins, cost - fundSlot.progress);
+              this.coins -= deposit;
+              fundSlot.progress += deposit;
+              this.coins = Math.max(0, Math.round(this.coins));
+              if (fundSlot.progress >= cost) {
+                this.spawnTower(fundSlot.cx, fundSlot.cy);
+                fundSlot.progress = cost;
+              }
             }
           }
         }
         const refreshBuildSlot = (slot) => {
-          const kind = slot.kind || 'tower';
-          const cost = kind === 'wall' ? WALL_COST : TOWER_COST;
-          const built = kind === 'wall' ? this.hasWallAt(slot.cx, slot.cy) : this.hasTowerAt(slot.cx, slot.cy);
+          const cost = TOWER_COST;
+          const built = this.hasTowerAt(slot.cx, slot.cy);
           if (built) {
             slot.zone.setVisible(false);
             slot.costText.setVisible(false);
@@ -817,25 +856,14 @@
           }
         };
         (this.towerSlots || []).forEach(refreshBuildSlot);
-        (this.wallSlots || []).forEach(refreshBuildSlot);
 
         const lev = this.wave || 1;
         const shootHero = lev >= 4;
         const gunCd = lev > 6 ? Math.max(420, ENEMY_SHOOT_COOLDOWN_MS - (lev - 6) * 38) : ENEMY_SHOOT_COOLDOWN_MS;
         this.enemyData.forEach(ed => {
           if (!ed.lastShotAtBase) ed.lastShotAtBase = 0;
-          const blockWall = this.getBlockingWall(ed);
-          if (blockWall) {
-            blockWall.hp -= WALL_CONTACT_DPS * dt;
-            if (blockWall.hp <= 0) {
-              if (blockWall.sprite && blockWall.sprite.destroy) blockWall.sprite.destroy();
-              const wi = this.wallData.indexOf(blockWall);
-              if (wi >= 0) this.wallData.splice(wi, 1);
-              this.releaseWallBuildSlot(blockWall.x, blockWall.y);
-            } else if (blockWall.sprite && blockWall.maxHp) {
-              blockWall.sprite.setAlpha(0.35 + 0.65 * (blockWall.hp / blockWall.maxHp));
-            }
-          }
+          const path = this.paths && ed.pathId != null && this.paths[ed.pathId] ? this.paths[ed.pathId] : (this.paths && this.paths[0]) ? this.paths[0] : null;
+          const wp = path ? path.waypoints : null;
 
           const candidates = [];
           const dToBase = dist(ed.obj.x, ed.obj.y, this.baseX, this.baseY);
@@ -849,13 +877,6 @@
               if (tw.hp != null && tw.hp <= 0) return;
               const d = dist(ed.obj.x, ed.obj.y, tw.x, tw.y);
               if (d <= ENEMY_TOWER_SHOOT_RANGE) candidates.push({ type: 'tower', d, tx: tw.x, ty: tw.y, color: 0xff9800, dmg: ENEMY_DAMAGE_TOWER, ref: tw });
-            });
-          }
-          if (this.wallData && this.wallData.length) {
-            this.wallData.forEach(ww => {
-              if (ww.hp != null && ww.hp <= 0) return;
-              const d = dist(ed.obj.x, ed.obj.y, ww.x, ww.y);
-              if (d <= ENEMY_WALL_SHOOT_RANGE) candidates.push({ type: 'wall', d, tx: ww.x, ty: ww.y, color: 0x795548, dmg: ENEMY_DAMAGE_WALL, ref: ww });
             });
           }
           candidates.sort((a, b) => a.d - b.d);
@@ -872,14 +893,10 @@
             this.enemyArrows.add(proj);
             this.enemyArrowData.push({
               x: ed.obj.x, y: ed.obj.y, vx, vy, damage: best.dmg, obj: proj,
-              target: best.type, towerRef: best.type === 'tower' ? best.ref : null, wallRef: best.type === 'wall' ? best.ref : null
+              target: best.type, towerRef: best.type === 'tower' ? best.ref : null
             });
           }
 
-          if (blockWall) return;
-
-          const path = this.paths && ed.pathId != null && this.paths[ed.pathId] ? this.paths[ed.pathId] : (this.paths && this.paths[0]) ? this.paths[0] : null;
-          const wp = path ? path.waypoints : null;
           if (wp && ed.pathIndex != null && ed.pathIndex < wp.length) {
             const target = wp[ed.pathIndex];
             const dx = target.x - ed.obj.x, dy = target.y - ed.obj.y;
@@ -979,11 +996,6 @@
               ea.hit = true;
               return;
             }
-            if (tgt0 === 'wall' && ea.wallRef && (ea.wallRef.hp == null || ea.wallRef.hp <= 0)) {
-              if (ea.obj && ea.obj.destroy) ea.obj.destroy();
-              ea.hit = true;
-              return;
-            }
             ea.x += ea.vx * dt;
             ea.y += ea.vy * dt;
             if (ea.obj && ea.obj.active) {
@@ -993,10 +1005,12 @@
             const tgt = ea.target || 'base';
             if (tgt === 'base' && dist(ea.x, ea.y, this.baseX, this.baseY) < 45) {
               this.baseHp -= ea.damage;
+              this.lastBaseDamagedAt = time;
               if (ea.obj && ea.obj.destroy) ea.obj.destroy();
               ea.hit = true;
             } else if (tgt === 'hero' && dist(ea.x, ea.y, this.hero.x, this.hero.y) < 28) {
               this.heroHp -= ea.damage;
+              this.lastHeroDamagedAt = time;
               if (ea.obj && ea.obj.destroy) ea.obj.destroy();
               ea.hit = true;
             } else if (tgt === 'tower' && ea.towerRef && ea.towerRef.hp != null) {
@@ -1009,20 +1023,6 @@
                   this.releaseTowerBuildSlot(ea.towerRef.x, ea.towerRef.y);
                 } else if (ea.towerRef.sprite && ea.towerRef.maxHp) {
                   this.applyTowerHpVisual(ea.towerRef);
-                }
-                if (ea.obj && ea.obj.destroy) ea.obj.destroy();
-                ea.hit = true;
-              }
-            } else if (tgt === 'wall' && ea.wallRef && ea.wallRef.hp != null) {
-              if (dist(ea.x, ea.y, ea.wallRef.x, ea.wallRef.y) < 38) {
-                ea.wallRef.hp -= ea.damage;
-                if (ea.wallRef.hp <= 0) {
-                  if (ea.wallRef.sprite && ea.wallRef.sprite.destroy) ea.wallRef.sprite.destroy();
-                  const ix = this.wallData.indexOf(ea.wallRef);
-                  if (ix >= 0) this.wallData.splice(ix, 1);
-                  this.releaseWallBuildSlot(ea.wallRef.x, ea.wallRef.y);
-                } else if (ea.wallRef.sprite && ea.wallRef.maxHp) {
-                  ea.wallRef.sprite.setAlpha(0.35 + 0.65 * (ea.wallRef.hp / ea.wallRef.maxHp));
                 }
                 if (ea.obj && ea.obj.destroy) ea.obj.destroy();
                 ea.hit = true;
@@ -1084,8 +1084,23 @@
     };
     const game = new Phaser.Game(config);
 
+    document.getElementById('retryLevelBtn').onclick = () => {
+      const gs = game.scene.getScene('Game');
+      gs.scene.restart({
+        startWave: gs.wave,
+        mapSequence: gs.mapSequence,
+        mapFlipHSeq: gs.mapFlipHSeq,
+        mapFlipVSeq: gs.mapFlipVSeq,
+        coins: gs.levelStartCoins != null ? gs.levelStartCoins : gs.coins,
+        useCustomArt: gs.useCustomArt
+      });
+      document.getElementById('gameOver').classList.remove('show');
+      document.getElementById('gameWin').classList.remove('show');
+      document.getElementById('levelPassedOverlay').classList.remove('show');
+      document.getElementById('pauseOverlay').classList.remove('show');
+    };
     document.getElementById('restartBtn').onclick = () => {
-      game.scene.getScene('Game').scene.restart();
+      game.scene.getScene('Game').scene.restart({ startWave: 1 });
       document.getElementById('gameOver').classList.remove('show');
       document.getElementById('gameWin').classList.remove('show');
       document.getElementById('levelPassedOverlay').classList.remove('show');
