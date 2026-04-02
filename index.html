@@ -36,6 +36,7 @@
     #introOverlay .intro-cta { margin-top: 24px; }
     #introOverlay .intro-cta button { background: #4caf50; color: #0d1f0d; padding: 14px 32px; font-size: 16px; font-weight: 700; border-radius: 10px; cursor: pointer; border: none; font-family: inherit; }
     #introOverlay .intro-cta button:hover { background: #66bb6a; }
+    #levelPassedOverlay.show { cursor: pointer; }
   </style>
 </head>
 <body>
@@ -72,7 +73,7 @@
   </div>
   <div class="overlay" id="levelPassedOverlay" style="display: none;">
     <h2 style="color: #81c784;">Level passed!</h2>
-    <p style="color: #fff;">Press <strong>Enter</strong> or <strong>Space</strong> when you’re ready for the next level.</p>
+    <p style="color: #fff;">Press <strong>Enter</strong>, <strong>Space</strong>, or <strong>click / tap anywhere</strong> when you’re ready for the next level.</p>
     <p style="color: #a5d6a7; font-size: 0.95rem; margin-top: 12px; max-width: 340px; text-align: center; line-height: 1.4;">Coins on the field are collected automatically. You can move, but you can’t build until you continue.</p>
   </div>
   <div class="overlay" id="gameOver">
@@ -241,6 +242,47 @@
     const GameScene = new Phaser.Class({
       Extends: Phaser.Scene,
       initialize: function() { Phaser.Scene.call(this, { key: 'Game' }); },
+      continueToNextLevelAfterPass: function() {
+        if (!this.levelPassedWaitingEnter) return;
+        this.levelPassedWaitingEnter = false;
+        const levelOverlay = document.getElementById('levelPassedOverlay');
+        if (levelOverlay) { levelOverlay.classList.remove('show'); levelOverlay.style.display = 'none'; }
+        if (this.wave >= MAX_LEVEL) {
+          document.getElementById('gameWin').classList.add('show');
+          document.querySelector('#gameWin h2').textContent = 'Level ' + MAX_LEVEL + ' complete!';
+          document.querySelector('#gameWin p').textContent = 'You won!';
+          const winBtn = document.querySelector('#gameWin button');
+          if (winBtn) winBtn.textContent = 'Play Again';
+          return;
+        }
+        this.towerData = [];
+        if (this.towers && this.towers.getChildren) {
+          this.towers.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
+          this.towers.clear(true, true);
+        }
+        this.towerProjData = [];
+        if (this.towerProjectiles && this.towerProjectiles.getChildren) {
+          this.towerProjectiles.getChildren().slice().forEach(p => { try { if (p && p.destroy) p.destroy(); } catch (e) {} });
+          this.towerProjectiles.clear(true, true);
+        }
+        if (this.towerSlots && this.towerSlots.length) {
+          this.towerSlots.forEach(s => {
+            if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
+            if (s.zone && s.zone.destroy) s.zone.destroy();
+            if (s.costText && s.costText.destroy) s.costText.destroy();
+          });
+          this.towerSlots = [];
+        }
+        this.wave++;
+        this.mapIndex = this.mapSequence[this.wave - 1];
+        this.baseHp = BASE_HP_MAX;
+        this.heroHp = HERO_HP_MAX;
+        this.lastHeroDamagedAt = -1e9;
+        this.lastBaseDamagedAt = -1e9;
+        this.buildTerrainAndSlots();
+        this.levelStartCoins = this.coins;
+        this.startWave();
+      },
       create: function() {
         const w = this.cameras.main.width;
         const h = this.cameras.main.height;
@@ -398,44 +440,7 @@
             e.key === 'Enter' || e.keyCode === 13 || e.key === ' ' || e.code === 'Space';
           if (advanceLevel && this.levelPassedWaitingEnter) {
             if (e.key === ' ' || e.code === 'Space') e.preventDefault();
-            this.levelPassedWaitingEnter = false;
-            const levelOverlay = document.getElementById('levelPassedOverlay');
-            if (levelOverlay) { levelOverlay.classList.remove('show'); levelOverlay.style.display = 'none'; }
-            if (this.wave >= MAX_LEVEL) {
-              document.getElementById('gameWin').classList.add('show');
-              document.querySelector('#gameWin h2').textContent = 'Level ' + MAX_LEVEL + ' complete!';
-              document.querySelector('#gameWin p').textContent = 'You won!';
-              const winBtn = document.querySelector('#gameWin button');
-              if (winBtn) winBtn.textContent = 'Play Again';
-              return;
-            }
-            this.towerData = [];
-            if (this.towers && this.towers.getChildren) {
-              this.towers.getChildren().slice().forEach(t => { try { if (t && t.destroy) t.destroy(); } catch (e) {} });
-              this.towers.clear(true, true);
-            }
-            this.towerProjData = [];
-            if (this.towerProjectiles && this.towerProjectiles.getChildren) {
-              this.towerProjectiles.getChildren().slice().forEach(p => { try { if (p && p.destroy) p.destroy(); } catch (e) {} });
-              this.towerProjectiles.clear(true, true);
-            }
-            if (this.towerSlots && this.towerSlots.length) {
-              this.towerSlots.forEach(s => {
-                if (s.progressBar && s.progressBar.destroy) s.progressBar.destroy();
-                if (s.zone && s.zone.destroy) s.zone.destroy();
-                if (s.costText && s.costText.destroy) s.costText.destroy();
-              });
-              this.towerSlots = [];
-            }
-            this.wave++;
-            this.mapIndex = this.mapSequence[this.wave - 1];
-            this.baseHp = BASE_HP_MAX;
-            this.heroHp = HERO_HP_MAX;
-            this.lastHeroDamagedAt = -1e9;
-            this.lastBaseDamagedAt = -1e9;
-            this.buildTerrainAndSlots();
-            this.levelStartCoins = this.coins;
-            this.startWave();
+            this.continueToNextLevelAfterPass();
           }
         });
 
@@ -1083,6 +1088,11 @@
       physics: { default: 'arcade', arcade: { debug: false } }
     };
     const game = new Phaser.Game(config);
+
+    document.getElementById('levelPassedOverlay').addEventListener('click', () => {
+      const gs = game.scene.getScene('Game');
+      if (gs && gs.levelPassedWaitingEnter) gs.continueToNextLevelAfterPass();
+    });
 
     document.getElementById('retryLevelBtn').onclick = () => {
       const gs = game.scene.getScene('Game');
